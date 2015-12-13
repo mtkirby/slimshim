@@ -1,7 +1,7 @@
-#!/bin/bash 
-# 20151025 Kirby
+#!/bin/bash
+# 20151213 Kirby
 
-# Usage: slimshim.sh <ip> <mac> [<redir ip> <redir mac>] | prep | undo
+# Usage: slimshim.sh <ip> <mac> <routerip> <routermac> [<redir ip> <redir mac>] | prep | undo
 #  
 # Do not run this script until you read everything and understand it.
 #  
@@ -34,8 +34,10 @@ sip=$1
 smac=$2
 rip=$3
 rmac=$4
+redirip=$5
+redirmac=$6
 
-# rip and rmac are for any other device you want to redirect to.  For example, if you are running this on a wifi router and you want to redirect to a connected wifi device.  I use this on OpenWRT to redirect to my wifi-attached laptop.
+# redirip and redirmac are for any other device you want to redirect to.  For example, if you are running this on a wifi router and you want to redirect to a connected wifi device.  I use this on OpenWRT to redirect to my wifi-attached laptop.
 
 # rdrports must overlap with dynports.  Dynports are for source ports on egress connections.  Rdrports will be redirected to $myip.
 dynports='27000-32000'
@@ -45,9 +47,9 @@ rdrports='25000:32000'
 # ssh redirect from outside.  Leave blank to not redirect.  This needs to be outside the range of rdrports.
 sshrdr='2501'
 
-if [ x$rip == 'x' ] && [ x$rmac == 'x' ];then
-	rip=$myip
-	rmac=$mymac
+if [ x$redirip == 'x' ] && [ x$redirmac == 'x' ];then
+	redirip=$myip
+	redirmac=$mymac
 fi
 
 function clearall() {
@@ -102,33 +104,41 @@ if [ x$1 == 'xundo' ]; then
 	exit 0
 fi
 if [ x$2 == 'x' ]; then
-	echo "Usage: $0 <ip> <mac> [ <redir ip> <redir mac> ] | prep | undo"
+	echo "Usage: $0 <ip> <mac> <routerip> <routermac> [ <redir ip> <redir mac> ] | prep | undo"
 	exit 1
 fi
 
 # just to make sure we're ready
 runprep
 
-ebtables -t nat -A POSTROUTING -s $mymac -j snat --to-source $smac
-ebtables -t nat -A POSTROUTING -s $rmac -j snat --to-source $smac
-iptables -t nat -A POSTROUTING -p tcp -s $myip -j SNAT --to $sip:$dynports
-iptables -t nat -A POSTROUTING -p udp -s $myip -j SNAT --to $sip:$dynports
-iptables -t nat -A POSTROUTING -p tcp -s $rip -j SNAT --to $sip:$dynports
-iptables -t nat -A POSTROUTING -p udp -s $rip -j SNAT --to $sip:$dynports
-iptables -t nat -A POSTROUTING -p icmp -s $myip -j SNAT --to $sip
-iptables -t nat -A POSTROUTING -p icmp -s $rip -j SNAT --to $sip
-ebtables -t nat -A PREROUTING -p 0x800 --ip-proto tcp --ip-destination $sip --ip-destination-port=$rdrports -j dnat --to-destination $rmac
-ebtables -t nat -A PREROUTING -p 0x800 --ip-proto udp --ip-destination $sip --ip-destination-port=$rdrports -j dnat --to-destination $rmac
-ebtables -t nat -A PREROUTING -p 0x800 --ip-proto tcp --ip-destination 1.1.1.1 -j dnat --to-destination $rmac
-ebtables -t nat -A PREROUTING -p 0x800 --ip-proto udp --ip-destination 1.1.1.1 -j dnat --to-destination $rmac
-iptables -t nat -A PREROUTING -d $sip -p tcp -m tcp -m multiport --dports $rdrports -j DNAT --to-destination $rip
-iptables -t nat -A PREROUTING -d $sip -p udp -m udp -m multiport --dports $rdrports -j DNAT --to-destination $rip
-iptables -t nat -A PREROUTING -d 1.1.1.1 -p tcp -j DNAT --to-destination $rip
-iptables -t nat -A PREROUTING -d 1.1.1.1 -p udp -j DNAT --to-destination $rip
+ebtables -t nat -A POSTROUTING -s $mymac ! -d $smac -j snat --to-source $smac
+ebtables -t nat -A POSTROUTING -s $redirmac ! -d $smac -j snat --to-source $smac
+ebtables -t nat -A POSTROUTING -s $mymac -d $smac -j snat --to-source $rmac
+ebtables -t nat -A POSTROUTING -s $redirmac -d $smac -j snat --to-source $rmac
+iptables -t nat -A POSTROUTING -p tcp -s $myip ! -d $sip -j SNAT --to $sip:$dynports
+iptables -t nat -A POSTROUTING -p udp -s $myip ! -d $sip -j SNAT --to $sip:$dynports
+iptables -t nat -A POSTROUTING -p tcp -s $myip -d $sip -j SNAT --to $rip:$dynports
+iptables -t nat -A POSTROUTING -p udp -s $myip -d $sip -j SNAT --to $rip:$dynports
+iptables -t nat -A POSTROUTING -p tcp -s $redirip ! -d $sip -j SNAT --to $sip:$dynports
+iptables -t nat -A POSTROUTING -p udp -s $redirip ! -d $sip -j SNAT --to $sip:$dynports
+iptables -t nat -A POSTROUTING -p tcp -s $redirip -d $sip -j SNAT --to $rip:$dynports
+iptables -t nat -A POSTROUTING -p udp -s $redirip -d $sip -j SNAT --to $rip:$dynports
+iptables -t nat -A POSTROUTING -p icmp -s $myip ! -d $sip -j SNAT --to $sip
+iptables -t nat -A POSTROUTING -p icmp -s $redirip ! -d $sip -j SNAT --to $sip
+iptables -t nat -A POSTROUTING -p icmp -s $myip -d $sip -j SNAT --to $rip
+iptables -t nat -A POSTROUTING -p icmp -s $redirip -d $sip -j SNAT --to $rip
+ebtables -t nat -A PREROUTING -p 0x800 --ip-proto tcp --ip-destination $sip --ip-destination-port=$rdrports -j dnat --to-destination $redirmac
+ebtables -t nat -A PREROUTING -p 0x800 --ip-proto udp --ip-destination $sip --ip-destination-port=$rdrports -j dnat --to-destination $redirmac
+ebtables -t nat -A PREROUTING -p 0x800 --ip-proto tcp --ip-destination 1.1.1.1 -j dnat --to-destination $redirmac
+ebtables -t nat -A PREROUTING -p 0x800 --ip-proto udp --ip-destination 1.1.1.1 -j dnat --to-destination $redirmac
+iptables -t nat -A PREROUTING ! -s $myip -d $sip -p tcp -m tcp -m multiport --dports $rdrports -j DNAT --to-destination $redirip
+iptables -t nat -A PREROUTING ! -s $myip -d $sip -p udp -m udp -m multiport --dports $rdrports -j DNAT --to-destination $redirip
+iptables -t nat -A PREROUTING -d 1.1.1.1 -p tcp -j DNAT --to-destination $redirip
+iptables -t nat -A PREROUTING -d 1.1.1.1 -p udp -j DNAT --to-destination $redirip
 
 if [ x$sshrdr != 'x' ];then
-	ebtables -t nat -A PREROUTING -p 0x800 --ip-proto tcp --ip-destination $sip --ip-destination-port=$sshrdr -j dnat --to-destination $rmac
-	iptables -t nat -A PREROUTING -d $sip -p tcp -m tcp --dport $sshrdr -j DNAT --to-destination $rip:22
+	ebtables -t nat -A PREROUTING -p 0x800 --ip-proto tcp --ip-destination $sip --ip-destination-port=$sshrdr -j dnat --to-destination $redirmac
+	iptables -t nat -A PREROUTING -d $sip -p tcp -m tcp --dport $sshrdr -j DNAT --to-destination $redirip:22
 fi
 
 echo "Now you need to find the default router and set your default gateway"
@@ -137,3 +147,5 @@ echo "You also need to add a route for the lan you are on to avoid the default g
 echo "Example: route add -net 192.168.1.0/24 dev br-lan"
 echo "Example: route add default gw 192.168.1.1"
 echo "Also, update /etc/resolv.conf"
+
+
