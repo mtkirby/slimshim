@@ -1,5 +1,6 @@
 #!/bin/bash
 # 20151213 Kirby
+# 20160530 Kirby
 
 which tcpdump >/dev/null 2>&1
 if [ $? != 0 ]; then
@@ -32,5 +33,23 @@ function slimguess() {
     # 21:33:32.482541 ARP, Reply 192.168.1.1 is-at 68:05:ca:32:5e:85, length 46
     routerip=$(echo $sniff |sed -e 's/.* Reply \(.*\) is-at .*/\1/')
     echo "routerip=$routerip"
+}
+
+
+function slimguessport2() {
+#  2	ac:87:a3:0a:43:62	no		  17.80
+	mac=$(brctl showmacs br-lan |awk '{if ( $1 == "2" && $3 == "no") { print $2 }} ' |head -1)
+	sniff=$(tcpdump -c1 -e -nni br-lan "ether src $mac" 2>/dev/null)
+	routermac=$(echo $sniff |awk '{print $4}' |cut -d',' -f1)
+	ip=$(echo $sniff |sed -e 's/.*length .*: \(.*\) > .*/\1/' |cut -d'.' -f1-4)
+	echo "mac=$mac"
+	echo "ip=$ip"
+	echo "routermac=$routermac"
+	
+	echo "# getting routerip.  Unplug and replug ethernet (to victim) to run quicker"
+	sniff=$(tcpdump -c1 -nni br-lan ether src $routermac and ether dst $mac and arp 2>/dev/null)
+	# 21:33:32.482541 ARP, Reply 192.168.1.1 is-at 68:05:ca:32:5e:85, length 46
+	routerip=$(echo $sniff |sed -e 's/.* Reply \(.*\) is-at .*/\1/')
+	echo "routerip=$routerip"
 }
 
