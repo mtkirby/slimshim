@@ -1,9 +1,12 @@
+SlimShim is a script that performs IP and MAC address spoofing on a directly-connected device without interrupting traffic to and from that device.  It injects spoofed packets below the radar (source ports).  
+
 QUICK OVERVIEW/TL;DR
 
+    The device you shim will remain up and connected.  Nothing on the victim device will change.
     This allows you to get past NAC (as long as you shim a trusted device).
-    This allows you to MITM any host connecting through the SlimShim.
+    This allows you to MITM the device connecting through the SlimShim.
     This allows you to spoof as any device connected to the SlimShim.
-    You can also shim a server or camera with some modification.
+    You can also shim a server with some modification to the slimguess function.
     If your SlimShim has wifi, you can route through it and appear as the victim.
     Everything is transparent to the network.
     Code is available at https://github.com/mtkirby/slimshim
@@ -15,6 +18,10 @@ TODO/Upcoming features:
 
     IPv6 support
     8021q vlan support
+
+
+
+
 
 SlimShim is a bash script that runs iptables and ebtables commands to mimic the IP and MAC of the victim.  It will use an ephemeral port (source ports) range below the range used by Windows and Linux devices.  SlimShim will forward a lower range of ephemeral ports to itself, such as ports 27000-32000. 
 
@@ -34,6 +41,8 @@ The shimredirect function can redirect traffic from the victim so that I can red
  
 The source is available at https://github.com/mtkirby/slimshim
 It is GPLv3.
+
+The slimshim.sh script will create an environment log file in /root that you can source and use the variables for your own scripts.
 
 So how can you protect your network against SlimShims?  You'd need your firewalls to log all connections that use a source port range of 27000-32000.
 
@@ -113,7 +122,7 @@ That should do it.  Let me know if something doesn't work for you.
 
 
 #############################################################################
-How to setup SlimShim on a Nexx WT3020.
+How to setup SlimShim on a Nexx WT3020.  These things are only $15-$20.  They are powered by usb.  They don't have much storage or ram, so don't expect much beyond shimming a victim and maybe run a small nmap scan.
 First install OpenWRT or LEDE.  I have mine modified to use a usb thumbdrive for storage.  The Nexx has very little storage and you won't be able to do much without a thumbdrive extension.  There is documentation on OpenWRT's site on how to use a thumbdrive as an overlay filesystem.  I use a sandisk ultrafit 16gb.  I compiled a custom OpenWRT build, but that was probably overkill.
 You should at the very least add these packages: arptables bash ebtables ebtables-utils ip ip-bridge ip-full ip6tables iptables kmod-bridge kmod-ebtables* kmod-ipt-* kmod-nf-conntrack* kmod-nf-ipt* kmod-nf-nat* kmod-nfnetlink kmod-nft-core kmod-nft-nat nftables
 
@@ -257,12 +266,10 @@ Run these uci commands:
 
     uci set system.@system[0].hostname=slimshim
 
-    uci commit
+    uci commit    
 
-
-
-   
 Copy the code from Github and put in /root/.  Now run slimrun.sh
 I have the slimrun.sh start on bootup via rc.local (/root/slimrun.sh >/tmp/slimrun.log 2>&1). 
 
 If that ran without errors, try to telnet to a website to see if everything is working.  You can sniff the interface to verify your IP/MAC spoofs.  The source port range should be within the range specified in the slimshim script.  The slimshim script will blink the power led at a slow pace when it wants you to unplug and replug the vicim ethernet to get the router's MAC. 
+
