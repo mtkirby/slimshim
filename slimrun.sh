@@ -1,35 +1,24 @@
 #!/bin/bash
-# 20151025 Kirby
+# 20160710 Kirby
 
-. /root/slimlib
+/root/slimshim autoshim
 
+# add my wifi network so I can route through the SlimShim
+/root/slimshim addLan --lan=169.254.1.0/24 --envfile=/root/slimshim.env 
 
-/root/slimshim.sh prep
+# redirect inbound 2501 to ssh on SlimShim
+/root/slimshim redirectIngressPort --proto=tcp --rdrport=2501 --dstport=22 --envfile=/root/slimshim.env 
 
-slimguess
-    
-/root/slimshim.sh $ip $mac $routerip $routermac
+# redirect outbound to 1.1.1.1 to SlimShim
+/root/slimshim redirectEgressIP --origdip=1.1.1.1 --envfile=/root/slimshim.env 
 
-# Assume that we are on a /24 network
-# If you have problems connecting to other IPs in a nearby subnet, try tuning the cidr
-ipnetwork="${ip%.*}.0/24"
-route add -net $ipnetwork dev br-lan >/dev/null 2>&1
-ripnetwork="${routerip%.*}.0/24"
-route add -net $ripnetwork dev br-lan >/dev/null 2>&1
-route add default gw $routerip >/dev/null 2>&1
+# redirect outbound to bing.com for http to google.com
+/root/slimshim redirectEgressPort --envfile=/root/slimshim.env --origdip=204.79.197.200 --newdip=172.217.4.110 --proto=tcp --dstport=80
 
-# set
-echo 'nameserver 8.8.8.8' > /etc/resolv.conf
-/etc/init.d/dnsmasq stop >/dev/null 2>&1
-sniff=$(tcpdump -c1 -nni br-lan "not ip6 and udp and port 53" 2>/dev/null)
-# 04:40:30.876500 IP 192.168.1.19.59369 > 192.168.1.1.53: 13937+ A? cnn.com. (25)
-dns=$(echo $sniff |awk '{print $5}' |cut -d'.' -f1-4)
-grep -q $dns /etc/resolv.conf
-if [ $? != 0 ]; then
-    echo "nameserver $dns" > /etc/resolv.conf
-fi
-grep -q 8.8.8.8 /etc/resolv.conf
-if [ $? != 0 ]; then
-    echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-fi
+# Watch for DNS requests and update resolv.conf
+screen -dmS getdns /root/slimshim getdns
+
+# Watch for arps and add to arp/route table
+# THIS IS REQUIRED for SlimShim to connect to other devices on the LAN
+screen -dmS arpwatch /root/slimshim arpwatch
 

