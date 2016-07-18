@@ -18,6 +18,7 @@ QUICK OVERVIEW/TL;DR
     802.1q vlans can be shimmed.
     Slimshim mimics the TTL of the victim device.
     You will need expert-level skills of Linux and networking to understand how this works.
+    You need to plug the victim into eth1.  The network guess function sniffs for input packets on that interface.
 
 
 
