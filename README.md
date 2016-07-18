@@ -1,29 +1,31 @@
-SlimShim is a script that performs IP and MAC address spoofing on a directly-connected device without interrupting traffic to and from that device.  It injects spoofed packets below the radar (source ports).  
+SlimShim is a script that performs IP and MAC address spoofing of a directly-connected device without interrupting traffic to and from that device. A SlimShim has 2 ethernet ports that is plugged in between the victim device and the switch/router. The SlimShim acts as a switch and injects spoofed packets below the radar (source ports).
+
+UPDATE: After all the work of testing and scripting, it turns out I just re-invented the wheel. The idea was already conceived by Alva Lease ‘Skip’ Duckwall IV and he did a presentation at Defcon 19.  His script is called 8021xbridge.  I like my script better.  It is better at network guessing and supports 802.1q.
+
 
 QUICK OVERVIEW/TL;DR
 
-    The device you shim will remain up and connected.  Nothing on the victim device will change.
+    The device you shim will remain up and connected. Nothing on the victim device will change.
     This allows you to get past NAC (as long as you shim a trusted device).
     This allows you to MITM the device connecting through the SlimShim.
     This allows you to spoof as any device connected to the SlimShim.
-    You can also shim a server with some modification to the slimguess function.
+    If you attack the victim, you will appear as the router.
     If your SlimShim has wifi, you can route through it and appear as the victim.
     Everything is transparent to the network.
+    A network scanner cannot detect SlimShim
     Code is available at https://github.com/mtkirby/slimshim
-    Only IPv4 is supported at the moment. IPv6 is coming soon. 
+    Only IPv4 is supported at the moment. IPv6 is coming soon.
+    802.1q vlans can be shimmed.
+    Slimshim mimics the TTL of the victim device.
     You will need expert-level skills of Linux and networking to understand how this works.
+
 
 
 TODO/Upcoming features:
 
     IPv6 support
-    8021q vlan support
 
-
-
-
-
-SlimShim is a bash script that runs iptables and ebtables commands to mimic the IP and MAC of the victim.  It will use an ephemeral port (source ports) range below the range used by Windows and Linux devices.  SlimShim will forward a lower range of ephemeral ports to itself, such as ports 27000-32000. 
+SlimShim is a bash script that runs iptables and ebtables commands to mimic the IP and MAC of the victim. It will use an ephemeral port (source ports) range below the range used by Windows and Linux devices. SlimShim will forward a lower range of ephemeral ports to itself, such as ports 27000-32000.
 
 SlimShim can run on any device that has 2 ethernet ports.  I use it on a Raspberry Pi(with a usb ethernet) running Kali and a Nexx WT3020 running OpenWRT.  To shim a PC, simply unplug it's ethernet and plug the cable into the SlimShim and plug the other SlimShim ethernet into the PC.  You may need a cross-over cable if your device can't configure it automatically.  The two interfaces on the SlimShim are bridged, so it acts as a switch.  The victim device does not know it has been shimmed and neither does the router.  
 I have wifi AP setup on my SlimShims so that I can connect to victim's network with a laptop and still appear as the victim IP/MAC.  
