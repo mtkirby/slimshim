@@ -423,8 +423,8 @@ function do_runprep() {
     ip link set dev br-lan address ${ARGS[mymac]} arp off || gotofail=1
     #route add default dev br-lan >/dev/null 2>&1
 
-    while ip route |grep -q default; do
-        defaultroute=$(ip route |grep default |head)
+    while ip route |grep -q 'default via'; do
+        defaultroute=$(ip route |grep 'default via' |head)
         ip route delete $defaultroute >/dev/null 2>&1
     done
 
