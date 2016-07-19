@@ -31,16 +31,24 @@ SlimShim is a bash script that runs iptables and ebtables commands to mimic the 
 SlimShim can run on any device that has 2 ethernet ports.  I use it on a Raspberry Pi(with a usb ethernet) running Kali and a Nexx WT3020 running OpenWRT.  To shim a PC, simply unplug it's ethernet and plug the cable into the SlimShim and plug the other SlimShim ethernet into the PC.  You may need a cross-over cable if your device can't configure it automatically.  The two interfaces on the SlimShim are bridged, so it acts as a switch.  The victim device does not know it has been shimmed and neither does the router.  
 I have wifi AP setup on my SlimShims so that I can connect to victim's network with a laptop and still appear as the victim IP/MAC.  
 
-The hardest part of shimming a victim is to get the IP/MAC of the victim and router.  On my SlimShims, I have the slimrun.sh start on bootup via rc.local (/root/slimrun.sh >/tmp/slimrun.log 2>&1).  The script will source the slimlib file and run a few tcpdumps to attempt to guess the IP/MAC of the victim and router.  The script assumes that you are shimming a PC, as it looks for outbound connections(source port range within 32768-65535). 
+
+The hardest part of shimming a victim is to get the IP/MAC of the victim and router. On my SlimShims, I have the slimrun.sh start on bootup via rc.local (/root/slimrun.sh >/tmp/slimrun.log 2>&1). The slimshim script will run 3 tcpdumps to attempt to guess the IP/MAC of the victim and router.  The script should also work if you are shimming a server that is receiving mostly inbound packets, such as a networked security camera (which is a funny story for another time).
+
+The method I use to guess the network is as follows:
+
+    Start a loop to sniff for packets.  If anything doesn’t look right, start over.
+    Sniff for inbound packets on eth1, where the victim device is plugged in.  This gets the victim IP, MAC, TTL, and 802.1q vlan tag(if used).
+    Get the route MAC by sniffing for packets that are sent to the victim IP, look for non-standard TTLs (because we want packets that were hopped), and ignore any local network packets (assuming we’re on a /24).
+    Now for the hard part, which is getting the router IP.  We have to watch for an arp request for who has the router MAC we got from the previous sniff. This may take a while for the victim to re-query the router IP, so to speed it up I re-plumb eth1 and also use scapy(if installed) to flood the assumed /24 with arp requests.
+
+ 
 The script will also watch for DNS queries and update /etc/resolv.conf with the nameserver that the victim is using.
-You will need to modify the script if you are shimming a server (or a security camera on ethernet, which is a funny story for another time).
-The script will also forward all connections to 1.1.1.1 to the SlimShim.  This allows the victim PC to connect to the SlimShim, which is useful to me when I'm pentesting.  The script will also forward port 2501 to it's ssh service so I can connect to SlimShim from elsewhere on the network.
 
-The slimlib file contains functions and can be sourced into a bash shell.  
+The script will also forward all connections to 1.1.1.1 to the SlimShim. This allows the victim PC to connect to the SlimShim, which is useful to me when I’m pentesting. The script will also forward port 2501 to it’s ssh service so I can connect to SlimShim from elsewhere on the network.
 
-The shimrdrport and shimrdrports functions can redirect traffic that is destined to the victim.  This is useful for opening ports to be used for reverse-bind attacks when I attack the network.  
+The redirectIngressPort and redirectIngressPorts functions can redirect traffic that is destined to the victim. This is useful for opening ports to be used for reverse-bind attacks when I attack the network.
 
-The shimredirect function can redirect traffic from the victim so that I can redirect DNS, or anything, for MITM attacks.  I once redirected a victim running Splunk Forwarder to a malicious Splunk server that I setup and deployed an app that opened a reverse shell.
+The redirectEgressPort function can redirect traffic from the victim so that I can redirect DNS, or anything, for MITM attacks. I once redirected a victim running Splunk Forwarder to a malicious Splunk server that I setup and deployed an app that opened a reverse shell.
  
 The source is available at https://github.com/mtkirby/slimshim
 It is GPLv3.
