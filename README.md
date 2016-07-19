@@ -94,7 +94,7 @@ Setup your /etc/network/interfaces like so:
 
     auto wlan0
     iface wlan0 inet static
-        address 169.254.1.1
+        address 192.0.0.1
         netmask 255.255.255.0
 
 Setup wifi.  Add this to /etc/hostapd/hostapd.conf.  Ssid is slimshim and password is Gaddafi'd! (anyone get the reference?)
@@ -121,14 +121,14 @@ Setup dhcp for the wifi interface.  Add this to /etc/dhcp/dhcpd.conf
     ddns-update-style none;
     option domain-name "shim.lan";
     option domain-name-servers 8.8.8.8;
-    subnet 169.254.1.0 netmask 255.255.255.0 {
-        range 169.254.1.10 169.254.1.254;
+    subnet 192.0.0.0 netmask 255.255.255.0 {
+        range 192.0.0.10 192.0.0.254;
     }
     default-lease-time 600;
     max-lease-time 7200;
     log-facility local7;
 
-The script will create a br-lan bridge and assign it 169.254.0.1/24 with MAC of 00:01:01:01:01:01.  The wifi interface will be 169.254.1.1/24.  You can ssh to it once you are connected to wifi.  Add it as your default route if you want to route through the SlimShim.
+The script will create a br-lan bridge and assign it 169.254.0.1/24 with MAC of 00:01:01:01:01:01.  The wifi interface will be 192.0.0.1/24.  You can ssh to it once you are connected to wifi.  Add it as your default route if you want to route through the SlimShim.
 Copy the code from Github and put in /root/.  Now run slimrun.sh
 I have the slimrun.sh start on bootup via rc.local (/root/slimrun.sh >/tmp/slimrun.log 2>&1). 
 If that ran without errors, try to telnet to a website to see if everything is working.  You can sniff the interface to verify your IP/MAC spoofs.  The source port range should be within the range specified in the slimshim script.
@@ -271,7 +271,7 @@ Run these uci commands:
     uci set network.wifi._orig_ifname='wlan0'
     uci set network.wifi._orig_bridge='false'
     uci set network.wifi.proto='static'
-    uci set network.wifi.ipaddr='169.254.1.1'
+    uci set network.wifi.ipaddr='192.0.0.1'
     uci set network.wifi.netmask='255.255.255.0'
     uci set network.wifi.delegate='0'
 
