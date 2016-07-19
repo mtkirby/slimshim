@@ -36,10 +36,13 @@ The hardest part of shimming a victim is to get the IP/MAC of the victim and rou
 
 The method I use to guess the network is as follows:
 
-    Start a loop to sniff for packets.  If anything doesn’t look right, start over.
-    Sniff for inbound packets on eth1, where the victim device is plugged in.  This gets the victim IP, MAC, TTL, and 802.1q vlan tag(if used).
-    Get the route MAC by sniffing for packets that are sent to the victim IP, look for non-standard TTLs (because we want packets that were hopped), and ignore any local network packets (assuming we’re on a /24).
-    Now for the hard part, which is getting the router IP.  We have to watch for an arp request for who has the router MAC we got from the previous sniff. This may take a while for the victim to re-query the router IP, so to speed it up I re-plumb eth1 and also use scapy(if installed) to flood the assumed /24 with arp requests.
+1) Start a loop to sniff for packets.  If anything doesn’t look right, start over.
+
+2) Sniff for inbound packets on eth1, where the victim device is plugged in.  This gets the victim IP, MAC, TTL, and 802.1q vlan tag(if used).
+
+3) Get the route MAC by sniffing for packets that are sent to the victim IP, look for non-standard TTLs (because we want packets that were hopped), and ignore any local network packets (assuming we’re on a /24).
+
+4) Now for the hard part, which is getting the router IP.  We have to watch for an arp request for who has the router MAC we got from the previous sniff. This may take a while for the victim to re-query the router IP, so to speed it up I re-plumb eth1 and also use scapy(if installed) to flood the assumed /24 with arp requests.
 
  
 The script will also watch for DNS queries and update /etc/resolv.conf with the nameserver that the victim is using.
