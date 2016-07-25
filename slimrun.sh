@@ -1,10 +1,17 @@
 #!/bin/bash
 # 20160710 Kirby
 
+which screen >/dev/null 2>&1
+if [ $? != 0 ]; then
+    echo "FATAL ERROR: you are missing the program: screen"              
+    exit 1  
+fi                                                                                                                                                                       
+
+
 /root/slimshim autoshim
 
 # add my wifi network so I can route through the SlimShim
-/root/slimshim addLan --lan=169.254.1.0/24 --envfile=/root/slimshim.env 
+/root/slimshim addLan --lan=192.0.0.0/24 --envfile=/root/slimshim.env 
 
 # redirect inbound 2501 to ssh on SlimShim
 /root/slimshim redirectIngressPort --proto=tcp --rdrport=2501 --dstport=22 --envfile=/root/slimshim.env 
