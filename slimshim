@@ -1,5 +1,5 @@
 #!/bin/bash
-# 20160831 Kirby
+# 20161008 Kirby
 
 ################################################################################
 # LICENSE
@@ -231,9 +231,10 @@ function do_getdns() {
     systemctl stop dnsmasq >/dev/null 2>&1
     service dnsmasq stop >/dev/null 2>&1
     pkill dnsmasq >/dev/null 2>&1
+    sleep 1
 
     # First add Google DNS so we can do resolution before we see requests
-	rm -rf /etc/resolv.conf >/dev/null 2>&1
+    rm -rf /etc/resolv.conf >/dev/null 2>&1
     echo 'nameserver 8.8.8.8' > /etc/resolv.conf
 
     # Loop the sniffer until we have a valid IP and make it the primary nameserver
@@ -538,7 +539,7 @@ function do_shim()
         modprobe 8021q >/dev/null 2>&1
         if ! lsmod |grep -q 8021q; then
             echo "ALERT: did not see 8021q kernel module via lsmod"
-			echo "I hope you have it compiled in the kernel. proceeding..."
+            echo "I hope you have it compiled in the kernel. proceeding..."
         fi
         brdev="br-lan.${ARGS[vlan]}"
         #vconfig add br-lan ${ARGS[vlan]}
