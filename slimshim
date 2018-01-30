@@ -530,7 +530,7 @@ function do_runprep() {
 
     ifconfig $int1 -arp up
     ifconfig $int2 -arp up
-    if brctl show br-lan 2>&1 |grep -q "No such device" 
+    if ! brctl show br-lan 2>&1 |grep -q "No such device" 
     then
         brctl addbr br-lan
         brctl addif br-lan $int1
