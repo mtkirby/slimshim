@@ -288,7 +288,7 @@ function do_arpwatch()
     do
         if brctl show |grep -q br-lan
         then
-            sniff=$(tcpdump -v -e -c1 -nni br-lan arp 2>/dev/null)
+            tcpdump -v -e -nni br-lan arp 2>/dev/null | while read sniff; do
             ip=''
             mac=''
             if echo $sniff |grep -q ' vlan '
@@ -325,6 +325,7 @@ function do_arpwatch()
                     echo ""
                 fi
             fi
+		    done
         else
             sleep 1
         fi
