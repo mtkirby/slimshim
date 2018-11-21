@@ -1,5 +1,5 @@
 #!/bin/bash
-# 20170327 Kirby
+# 20180130 Kirby
 
 ################################################################################
 # LICENSE
@@ -18,11 +18,12 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ################################################################################
 
-
+# To check script sanity, run:
 ##shellcheck -e SC2086,SC2001 slimshim
 
 ################################################################################
-function do_guess() {
+function do_guess() 
+{
     local sniff
     local sip
     local rip
@@ -231,7 +232,8 @@ function do_guess() {
     ARGS[vlan]=$vlan
 }
 ################################################################################
-function blinkled() {
+function blinkled() 
+{
     local ledfile=$1
     while [[ -f /tmp/blink ]]
     do
@@ -242,7 +244,8 @@ function blinkled() {
     done
 }
 ################################################################################
-function do_getdns() {
+function do_getdns() 
+{
     local dns
     local sniff
 
@@ -286,6 +289,7 @@ function do_arpwatch()
     # We continuously watch for arps and add to the arptable and route table.
     while :
     do
+        # Continuosly check for br-lan in case shim is stopped or restarted.
         if brctl show |grep -q br-lan
         then
             sniff=$(tcpdump -v -e -c1 -nni br-lan arp 2>/dev/null)
@@ -301,8 +305,8 @@ function do_arpwatch()
             fi
             if echo $sniff |grep -q is-at
             then
-                mac=$(echo $sniff |sed 's/.* is-at \(.*\), .*/\1/')
-                ip=$(echo $sniff |sed 's/.* Reply \(.*\) is-at .*/\1/')
+                mac=$(echo $sniff |sed -e 's/.* is-at \(.*\), .*/\1/')
+                ip=$(echo $sniff |sed -e 's/.* Reply \(.*\) is-at .*/\1/')
             fi
             if echo $sniff |grep -q who-has
             then
@@ -319,21 +323,23 @@ function do_arpwatch()
                 if ! ip neigh |egrep  "^$ip " |grep -q $mac
                 then
                     echo $sniff
-                    echo "adding arp for $ip and $mac"
+                    echo "adding arp for $ip at $mac"
                     ip neigh replace $ip lladdr $mac dev $brdev >/dev/null 2>&1
                     route add $ip dev $brdev >/dev/null 2>&1
                     echo ""
                 fi
             fi
         else
+            # May be waiting for shim to complete.
+            # Sleep and try again.
             sleep 1
         fi
     done
 }
 ################################################################################
+# redirect outbound traffic from victim($sip) to destination($dip)
 function redirectEgressIP()
 {
-# redirect outbound traffic from victim($sip) to destination($dip)
     if [[ -z ${ARGS[newdip]} ]]
     then
         ARGS[newdip]=${ARGS[myip]}
@@ -351,9 +357,9 @@ function redirectEgressIP()
     set +x
 }
 ################################################################################
+# redirect outbound traffic from victim($sip) to destination($dip) for port $dstport
 function redirectEgressPort()
 {
-# redirect outbound traffic from victim($sip) to destination($dip) for port $dstport
     if [[ -z ${ARGS[dstport]} ]] \
     || [[ -z ${ARGS[proto]}   ]] \
     || [[ -z ${ARGS[sip]}     ]] \
@@ -369,8 +375,9 @@ function redirectEgressPort()
     set +x
 }
 ################################################################################
-function redirectIngressPort() {
 # redirect traffic going to victim IP($sip) on $rdrport to the SlimShim on $dstport
+function redirectIngressPort() 
+{
     if [[ -z ${ARGS[proto]}   ]] \
     || [[ -z ${ARGS[sip]}     ]] \
     || [[ -z ${ARGS[rdrport]} ]] \
@@ -386,8 +393,9 @@ function redirectIngressPort() {
     set +x
 }
 ################################################################################
-function redirectIngressPorts() {
-# redirct multiple ports(begin:end) to SlimShim.  Useful for reverse-bind attacks in Metasploit
+# redirect multiple ports(begin:end) to SlimShim.  Useful for reverse-bind attacks in Metasploit
+function redirectIngressPorts() 
+{
     if [[ -z ${ARGS[proto]}   ]] \
     || [[ -z ${ARGS[sip]}     ]] \
     || [[ -z ${ARGS[rdrport]} ]] \
@@ -403,8 +411,9 @@ function redirectIngressPorts() {
     set +x
 }
 ################################################################################
-function addLan() {
 # add a lan to the shim, e.g. wifi or openvpn on the SlimShim device
+function addLan() 
+{
     if [[ -z ${ARGS[lan]}      ]] \
     || [[ -z ${ARGS[sip]}      ]] \
     || [[ -z ${ARGS[rip]}      ]] \
@@ -480,7 +489,8 @@ function do_envwrite()
     done
 }
 ################################################################################
-function do_clearall() {
+function do_clearall() 
+{
     ebtables -t filter -F >/dev/null 2>&1
     iptables -t filter -F >/dev/null 2>&1
     ebtables -t nat -F >/dev/null 2>&1
@@ -489,7 +499,8 @@ function do_clearall() {
     iptables -t raw -F >/dev/null 2>&1
 }
 ################################################################################
-function do_runprep() {
+function do_runprep() 
+{
     local gotofail=0
     local int1
     local int2
@@ -574,7 +585,8 @@ function do_shim()
         if ! lsmod |grep -q 8021q
         then
             echo "ALERT: did not see 8021q kernel module via lsmod"
-            echo "I hope you have it compiled in the kernel. proceeding..."
+            echo "I hope you have it compiled in the kernel."
+            echo "Proceeding anyways.  Watch out for failures."
         fi
         brdev="br-lan.${ARGS[vlan]}"
         #vconfig add br-lan ${ARGS[vlan]}
