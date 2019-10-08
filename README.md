@@ -138,7 +138,7 @@ That should do it.  Let me know if something doesn't work for you.
 #############################################################################
 How to setup SlimShim on a Nexx WT3020.  These things are only $15-$20.  They are powered by usb.  They don't have much storage or ram, so don't expect much beyond shimming a victim and maybe run a small nmap scan.
 First install OpenWRT or LEDE.  I have mine modified to use a usb thumbdrive for storage.  The Nexx has very little storage and you won't be able to do much without a thumbdrive extension.  There is documentation on OpenWRT's site on how to use a thumbdrive as an overlay filesystem.  I use a sandisk ultrafit 16gb.  I compiled a custom OpenWRT build, but that was probably overkill.
-You should at the very least add these packages: arptables bash ebtables ebtables-utils ip ip-bridge ip-full ip6tables iptables kmod-bridge kmod-ebtables* kmod-ipt-* kmod-nf-conntrack* kmod-nf-ipt* kmod-nf-nat* kmod-nfnetlink kmod-nft-core kmod-nft-nat nftables
+You should at the very least add these packages: arptables bash ebtables ebtables-utils ip ip-bridge ip-full ip6tables iptables kmod-bridge kmod-ebtables* kmod-ipt-* kmod-nf-conntrack* kmod-nf-ipt* kmod-nf-nat* kmod-nfnetlink kmod-nft-core kmod-nft-nat nftables swconfig
 
 Run these uci commands:
 
@@ -185,46 +185,13 @@ Run these uci commands:
 
     uci set dropbear.@dropbear[0].GatewayPorts='on'
 
-    uci delete firewall.@defaults[0] >/dev/null 2>&1
-    uci delete firewall.@defaults[0] >/dev/null 2>&1
-    uci delete firewall.@defaults[0] >/dev/null 2>&1
-    uci delete firewall.@defaults[0] >/dev/null 2>&1
-    uci delete firewall.@defaults[0] >/dev/null 2>&1
-    uci delete firewall.@zone[0] >/dev/null 2>&1
-    uci delete firewall.@zone[0] >/dev/null 2>&1
-    uci delete firewall.@zone[0] >/dev/null 2>&1
-    uci delete firewall.@zone[0] >/dev/null 2>&1
-    uci delete firewall.@zone[0] >/dev/null 2>&1
-    uci delete firewall.@forwarding[0] >/dev/null 2>&1
-    uci delete firewall.@forwarding[0] >/dev/null 2>&1
-    uci delete firewall.@forwarding[0] >/dev/null 2>&1
-    uci delete firewall.@forwarding[0] >/dev/null 2>&1
-    uci delete firewall.@forwarding[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@rule[0] >/dev/null 2>&1
-    uci delete firewall.@include[0] >/dev/null 2>&1
-    uci delete firewall.@include[0] >/dev/null 2>&1
-    uci delete firewall.@include[0] >/dev/null 2>&1
-    uci delete firewall.@include[0] >/dev/null 2>&1
-    uci delete firewall.@include[0] >/dev/null 2>&1
+    while uci show firewall 2>&1|grep  -q firewall
+    do 
+        for i in $(uci show firewall|cut -d'=' -f1)
+        do 
+            uci delete $i >/dev/null 2>&1
+        done
+    done
 
     uci add firewall defaults
     uci set firewall.@defaults[0]=defaults
@@ -287,3 +254,7 @@ I have the slimrun.sh start on bootup via rc.local (/root/slimrun.sh >/tmp/slimr
 
 If that ran without errors, try to telnet to a website to see if everything is working.  You can sniff the interface to verify your IP/MAC spoofs.  The source port range should be within the range specified in the slimshim script.  The slimshim script will blink the power led at a slow pace when it wants you to unplug and replug the vicim ethernet to get the router's MAC. 
 
+
+Other packages you may want to install:
+opkg update 
+opkg install aircrack-ng airmon-ng apache arp-scan arptables at autossh bc bind-check bind-client bind-dig bind-dnssec bind-host bind-libs bind-rndc bind-server bind-tools bzip2 ca-bundle ca-certificates certtool coreutils curl ddns-scripts ddns-scripts_cloudflare.com-v4 ddns-scripts_freedns_42_pl ddns-scripts_godaddy.com-v1 ddns-scripts_no-ip_com ddns-scripts_nsupdate ddns-scripts_route53-v1 diffutils dmesg dmidecode ebtables ebtables-utils emailrelay ethtool extract file fstools fstrim git git-http gnupg gnupg-utils haproxy hdparm htop ifstat iftop iodine iodined ip-bridge ip-full ipmitool ipsec-tools iw-full iwcap iwinfo jq less lftp lsof macchanger mariadb-client mariadb-client-extra mii-tool mtr ncat-ssl ndiff netcat nginx nmap-ssl openssh-client openssh-client-utils openssh-keygen openssh-moduli openssh-server openssh-sftp-client openssh-sftp-server openssl-util perl perl-net-http perl-net-telnet pgsql-cli pgsql-cli-extra pppdump python python3 python3-openssl python3-pip python3-setuptools quagga quagga-bgpd quagga-isisd quagga-libospf quagga-libzebra quagga-ospf6d quagga-ospfd quagga-ripd quagga-ripngd quagga-vtysh quagga-watchquagga reaver relayctl relayd rsync rsyncd ruby ruby-openssl samba36-client samba36-hotplug samba36-net samba36-server scapy screen script-utils snmp-mibs snmp-utils socat socksify sshfs sshtunnel sslh ssmtp strace stunnel tcpbridge tcpcapinfo tcpdump tcpdump-mini tcpliveplay tcpprep tcpproxy tcpreplay tcpreplay-all tcpreplay-edit tcprewrite thc-ipv6-address6 thc-ipv6-alive6 thc-ipv6-covert-send6 thc-ipv6-covert-send6d thc-ipv6-denial6 thc-ipv6-detect-new-ip6 thc-ipv6-detect-sniffer6 thc-ipv6-dnsdict6 thc-ipv6-dnsrevenum6 thc-ipv6-dos-new-ip6 thc-ipv6-dump-router6 thc-ipv6-exploit6 thc-ipv6-fake-advertise6 thc-ipv6-fake-dhcps6 thc-ipv6-fake-dns6d thc-ipv6-fake-dnsupdate6 thc-ipv6-fake-mipv6 thc-ipv6-fake-mld26 thc-ipv6-fake-mld6 thc-ipv6-fake-mldrouter6 thc-ipv6-fake-router26 thc-ipv6-fake-router6 thc-ipv6-fake-solicitate6 thc-ipv6-flood-advertise6 thc-ipv6-flood-dhcpc6 thc-ipv6-flood-mld26 thc-ipv6-flood-mld6 thc-ipv6-flood-mldrouter6 thc-ipv6-flood-router26 thc-ipv6-flood-router6 thc-ipv6-flood-solicitate6 thc-ipv6-fragmentation6 thc-ipv6-fuzz-dhcpc6 thc-ipv6-fuzz-dhcps6 thc-ipv6-fuzz-ip6 thc-ipv6-implementation6 thc-ipv6-implementation6d thc-ipv6-inverse-lookup6 thc-ipv6-kill-router6 thc-ipv6-ndpexhaust6 thc-ipv6-node-query6 thc-ipv6-parasite6 thc-ipv6-passive-discovery6 thc-ipv6-randicmp6 thc-ipv6-redir6 thc-ipv6-rsmurf6 thc-ipv6-sendpees6 thc-ipv6-sendpeesmp6 thc-ipv6-smurf6 thc-ipv6-thcping6 thc-ipv6-toobig6 thc-ipv6-trace6 tor tor-gencert tor-geoip tor-resolve trace-cmd trace-cmd-extra tracertools unrar unzip usbutils vnstat wget wireguard wireguard-tools wpa-cli xinetd xz xz-utils

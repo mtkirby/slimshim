@@ -1,5 +1,5 @@
 #!/bin/bash
-# 20180130 Kirby
+# 20191007 Kirby
 
 ################################################################################
 # LICENSE
@@ -678,6 +678,12 @@ if ! which tcpdump awk sed cut grep egrep >/dev/null 2>&1
 then
     echo "# FAIL: you must install the following: tcpdump awk sed cut grep egrep"
     exit 1
+fi
+
+# Kali broke ebtables, but left the legacy
+if which ebtables-legacy >/dev/null 2>&1
+then
+    alias ebtables=ebtables-legacy
 fi
 
 case $1 in
