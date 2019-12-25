@@ -292,7 +292,7 @@ function do_arpwatch()
         # Continuosly check for br-lan in case shim is stopped or restarted.
         if brctl show |grep -q br-lan
         then
-            sniff=$(tcpdump -v -e -c1 -nni br-lan arp 2>/dev/null)
+            tcpdump -v -e -nni br-lan arp 2>/dev/null | while read sniff; do
             ip=''
             mac=''
             if echo $sniff |grep -q ' vlan '
@@ -329,6 +329,7 @@ function do_arpwatch()
                     echo ""
                 fi
             fi
+		    done
         else
             # May be waiting for shim to complete.
             # Sleep and try again.
@@ -541,7 +542,7 @@ function do_runprep()
 
     ifconfig $int1 -arp up
     ifconfig $int2 -arp up
-    if brctl show br-lan 2>&1 |grep -q "No such device" 
+    if ! brctl show br-lan 2>&1 |grep -q "No such device" 
     then
         brctl addbr br-lan
         brctl addif br-lan $int1
